@@ -6,9 +6,24 @@ powers photo-based ID suggestions and range/occurrence data in later phases.
 """
 from __future__ import annotations
 
+import os
+
 import httpx
 
 INAT_BASE = "https://api.inaturalist.org/v1"
+
+
+def _sanitize_no_proxy() -> None:
+    """Drop malformed NO_PROXY entries (bracketed IPv6 literals like "[::1]")
+    that crash httpx's proxy-env parsing. Entries without brackets are left
+    untouched, so this is a no-op on well-formed systems."""
+    for var in ("NO_PROXY", "no_proxy"):
+        val = os.environ.get(var)
+        if val and "[" in val:
+            os.environ[var] = ",".join(p for p in val.split(",") if "[" not in p)
+
+
+_sanitize_no_proxy()
 
 
 def search_taxa(query: str, per_page: int = 10) -> list[dict]:

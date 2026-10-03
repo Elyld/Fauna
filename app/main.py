@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import inat
+from app import pages
 from app.database import UPLOAD_DIR, get_session, init_db
 from app.models import Observation
 from app.version import APP_NAME, VERSION
@@ -37,6 +38,8 @@ app.add_middleware(
 )
 
 app.mount("/photos", StaticFiles(directory=str(UPLOAD_DIR)), name="photos")
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 ALLOWED_PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
@@ -70,17 +73,22 @@ def _obs_to_dict(o: Observation) -> dict:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index():
-    return f"""<!doctype html><html><head><title>{APP_NAME}</title></head>
-<body style="font-family:sans-serif;max-width:640px;margin:4rem auto;padding:0 1rem">
-<h1>{APP_NAME} 🦌</h1>
-<p>Wildlife observation journal — v{VERSION} scaffold.</p>
-<ul>
-<li><a href="/api/health">API health</a></li>
-<li><a href="/api/observations">Observations</a></li>
-<li><a href="/api/species/search?q=robin">Species search (e.g. robin)</a></li>
-<li><a href="/docs">API docs</a></li>
-</ul></body></html>"""
+def index(session: Session = Depends(get_session)):
+    obs = session.query(Observation).order_by(Observation.id.desc()).all()
+    dicts = [_obs_to_dict(o) for o in obs]
+    species = {o["species_name"] for o in dicts if o.get("species_name")}
+    return pages.home_page(len(dicts), len(species), dicts[:4])
+
+
+@app.get("/observations", response_class=HTMLResponse)
+def observations_page(session: Session = Depends(get_session)):
+    obs = session.query(Observation).order_by(Observation.id.desc()).all()
+    return pages.observations_page([_obs_to_dict(o) for o in obs])
+
+
+@app.get("/observations/new", response_class=HTMLResponse)
+def new_observation_page():
+    return pages.new_observation_page()
 
 
 @app.get("/api/health")

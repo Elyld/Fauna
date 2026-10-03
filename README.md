@@ -26,11 +26,14 @@ Data lives in `./data` (SQLite) and `./photos` (observation pictures) — both a
 - [x] Observation logging API (species, count, date/time, GPS, location name, notes)
 - [x] Photo uploads served at `/photos`
 - [x] Species search/autocomplete backed by iNaturalist (`GET /api/species/search?q=robin`)
+- [x] Pink-themed web UI: home (`/`), observations (`/observations`), log-a-sighting form with iNaturalist autocomplete (`/observations/new`)
 - [ ] Photo-based ID suggestions (iNaturalist computer vision)
 - [ ] Range maps per species (iNaturalist/GBIF occurrence data)
 - [ ] Life list + stats
-- [ ] Photo gallery + frontend pages
+- [ ] Photo gallery
 - [ ] Mobile-friendly quick-log
+
+Demo data + screenshots: with the app running, `scripts/seed_demo.py` seeds five charming observations (real iNaturalist names and photos) via the API, and `scripts/screenshots.py` captures `docs/screenshots/` with Chrome for Testing.
 
 ## Species data
 
