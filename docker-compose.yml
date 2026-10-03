@@ -1,0 +1,34 @@
+# Fauna — wildlife observation journal (working name; will change).
+#
+#   docker compose up -d
+#
+# Then open http://localhost:4001 (or your FAUNA_PORT).
+
+services:
+  fauna:
+    build: .
+    container_name: fauna-wildlife-journal
+    restart: unless-stopped
+    ports:
+      - "${FAUNA_PORT:-4001}:8000"
+    # Let the container reach services on the Docker host by hostname.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      FAUNA_DATA_DIR: /data
+      FAUNA_UPLOAD_DIR: /photos
+      FAUNA_DATABASE_URL: sqlite:////data/fauna.db
+    volumes:
+      # SQLite database file + observation photos persist on the host.
+      - ./data:/data
+      - ./photos:/photos
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status==200 else 1)
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
