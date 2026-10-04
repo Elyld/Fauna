@@ -16,6 +16,9 @@
   --muted: #9a8268;
   --border: #e7d6bf;
   --white: #ffffff;
+  /* strawberry-ice-cream bubblegum links — light and sweet on cream */
+  --bubblegum: #f7aec9;
+  --bubblegum-deep: #ef8fb8;
 }
 
 * { box-sizing: border-box; }
@@ -28,7 +31,8 @@ body {
   line-height: 1.5;
 }
 
-a { color: var(--mauve-deep); }
+a { color: var(--bubblegum); }
+a:hover { color: var(--bubblegum-deep); }
 
 .site-header {
   background: linear-gradient(135deg, var(--mauve), var(--mauve-deep));

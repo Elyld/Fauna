@@ -21,6 +21,29 @@ PYTHONPATH=. .venv/bin/uvicorn app.main:app --reload --port 4001
 
 Data lives in `./data` (SQLite) and `./photos` (observation pictures) — both are Docker volumes, so they survive rebuilds.
 
+## Deploying in Dockge (GHCR image)
+
+Fauna publishes a ready-made image to GitHub Container Registry on every push to `main`, so Dockge (or Portainer, or plain compose) can run it with zero build step:
+
+```yaml
+services:
+  fauna:
+    image: ghcr.io/elyld/fauna:latest
+    container_name: fauna-wildlife-journal
+    restart: unless-stopped
+    ports:
+      - "${FAUNA_PORT:-4001}:8000"
+    environment:
+      FAUNA_DATA_DIR: /data
+      FAUNA_UPLOAD_DIR: /photos
+      FAUNA_DATABASE_URL: sqlite:////data/fauna.db
+    volumes:
+      - ./data:/data
+      - ./photos:/photos
+```
+
+Paste that into a new Dockge stack (or just use this repo's `docker-compose.yml` as-is — it already pulls the image), hit deploy, and open the host's port 4001. Updating is `docker compose pull && docker compose up -d`, or Dockge's update button — your sightings live in the bind-mounted `./data` and `./photos` folders, not the image, so nothing is lost.
+
 ## Roadmap (Phase 1)
 
 - [x] Observation logging API (species, count, date/time, GPS, location name, notes)

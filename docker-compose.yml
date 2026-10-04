@@ -1,12 +1,17 @@
 # Fauna — wildlife observation journal (working name; will change).
 #
+# Plug n' play via GHCR. No build needed:
+#
 #   docker compose up -d
 #
 # Then open http://localhost:4001 (or your FAUNA_PORT).
+#
+# To build the image locally instead of pulling, uncomment the `build:` line.
 
 services:
   fauna:
-    build: .
+    image: ghcr.io/elyld/fauna:latest
+    # build: .
     container_name: fauna-wildlife-journal
     restart: unless-stopped
     ports:
