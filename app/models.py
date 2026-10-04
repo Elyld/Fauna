@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -26,6 +26,9 @@ class Observation(Base):
     location_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    needs_id: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True
+    )  # True = "I'm not sure what this is" — ID still needs confirming
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

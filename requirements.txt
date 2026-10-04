@@ -4,3 +4,8 @@ sqlalchemy
 python-multipart
 pydantic
 httpx
+# Sound ID (optional but recommended): BirdNET bird-song recognition.
+# Heavy: pulls in TensorFlow (~700MB) and downloads a ~230MB model on first
+# use. The app runs fine without it — /api/identify-audio then reports
+# "not_installed" and the Sound ID page says so gracefully.
+birdnet-analyzer>=2.4
