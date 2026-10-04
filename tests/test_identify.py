@@ -137,6 +137,9 @@ def _upload_identify():
 def test_api_identify_returns_suggestions_and_pending_photo(monkeypatch):
     import app.main as main_mod
 
+    # No OpenRouter key in this module's DB, so the legacy iNat-CV fallback
+    # path runs — it requires INAT_API_TOKEN to be configured.
+    monkeypatch.setenv("INAT_API_TOKEN", "dummy-token")
     monkeypatch.setattr(main_mod.inat, "identify_image", lambda *a, **k: CANNED)
     r = _upload_identify()
     assert r.status_code == 200, r.text
@@ -150,6 +153,8 @@ def test_api_identify_returns_suggestions_and_pending_photo(monkeypatch):
 
 def test_api_identify_not_connected_still_saves_photo(monkeypatch):
     import app.main as main_mod
+
+    monkeypatch.setenv("INAT_API_TOKEN", "dummy-token")
 
     def _boom(*a, **k):
         raise inat.INatAuthError("no_token")
@@ -174,6 +179,7 @@ def test_api_identify_rejects_bad_type():
 def test_confirm_flow_claims_pending_photo_and_needs_id(monkeypatch):
     import app.main as main_mod
 
+    monkeypatch.setenv("INAT_API_TOKEN", "dummy-token")
     monkeypatch.setattr(main_mod.inat, "identify_image", lambda *a, **k: CANNED)
     pending = _upload_identify().json()["pending_photo"]
 

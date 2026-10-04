@@ -44,6 +44,7 @@ def layout(title: str, body: str) -> str:
     <a href="/identify">🔍 Identify</a>
     <a href="/identify-audio">🎵 Sound ID</a>
     <a href="/observations/new">+ Log a sighting</a>
+    <a href="/settings">⚙️ Settings</a>
   </nav>
 </header>
 <main class="wrap">
@@ -147,7 +148,7 @@ def identify_page() -> str:
 </div>
 
 <div id="pane-working" style="display:none">
-  <div class="spinner"><span class="big">🔍</span>Asking iNaturalist what this might be…</div>
+  <div class="spinner"><span class="big">🔍</span>Taking a close look at your photo…</div>
 </div>
 
 <div id="pane-results" style="display:none">
@@ -252,11 +253,18 @@ def identify_page() -> str:
 
     if (data.error === 'not_connected' || data.error === 'token_expired') {
       notice.innerHTML = '<div class="notice">🔌 <strong>Photo ID isn\\'t connected yet.</strong> ' +
-        'It needs a quick one-time setup (an iNaturalist link). ' +
+        'It needs a quick one-time setup: add an OpenRouter API key on the ' +
+        '<a href="/settings">Settings</a> page. ' +
         'You can still log this sighting manually below — your photo is saved and ready.</div>';
-    } else if (data.error === 'inat_unreachable') {
-      notice.innerHTML = '<div class="notice">📡 <strong>iNaturalist didn\\'t answer.</strong> ' +
+    } else if (data.error === 'inat_unreachable' || data.error === 'vision_unreachable') {
+      notice.innerHTML = '<div class="notice">📡 <strong>The identifier didn\\'t answer.</strong> ' +
         'Check your connection and try again, or log it manually below.</div>';
+    } else if (data.error === 'vision_parse_failed') {
+      notice.innerHTML = '<div class="notice">🧐 <strong>That answer came back garbled.</strong> ' +
+        'Try the photo again, or log it manually below.</div>';
+    } else if (data.error === 'no_animal_found') {
+      notice.innerHTML = '<div class="notice">🐾 <strong>No animal spotted in that photo.</strong> ' +
+        'A closer or clearer shot works best — or log it manually below.</div>';
     }
 
     (data.suggestions || []).forEach(function (s) {
@@ -511,6 +519,77 @@ def identify_audio_page() -> str:
 </script>
 """
     return layout("Sound ID", body)
+
+
+def settings_page(current: dict | None = None) -> str:
+    current = current or {}
+    key_configured = current.get("openrouter_api_key_configured")
+    vision_model = _esc(current.get("vision_model") or "")
+    default_model = _esc(current.get("default_vision_model") or "")
+    key_status = (
+        '<div class="hint">✓ A key is saved. Entering a new one replaces it; '
+        "leaving it blank keeps it.</div>"
+        if key_configured
+        else '<div class="hint">No key saved yet — photo ID will stay in manual mode.</div>'
+    )
+    body = f"""
+<h2 class="section-title" style="margin-top:0">⚙️ Settings</h2>
+<div class="form-card">
+  <h3 style="margin-top:0">Photo ID</h3>
+  <p class="hint" style="margin-top:0">
+    Photo ID asks a vision model (through OpenRouter) what animal is in a
+    picture. Paste your OpenRouter API key once — it's stored on this server
+    and never expires, so there's nothing to renew.
+  </p>
+  <form id="settings-form">
+    <div class="field">
+      <label for="or-key">OpenRouter API key</label>
+      <input type="password" id="or-key" autocomplete="off"
+             placeholder="sk-or-…">
+      {key_status}
+    </div>
+    <div class="field">
+      <label for="vision-model">Vision model</label>
+      <input type="text" id="vision-model" value="{vision_model}">
+      <div class="hint">Default: <code>{default_model}</code> (free). Free
+      models can be slow or rate-limited — a cheap paid vision model costs a
+      fraction of a cent per photo if one is ever needed.</div>
+    </div>
+    <div class="cta-row" style="justify-content:flex-start">
+      <button class="btn" type="submit">Save settings</button>
+    </div>
+  </form>
+  <div id="settings-msg" style="margin-top:0.75rem"></div>
+</div>
+<script>
+(function () {{
+  var form = document.getElementById('settings-form');
+  var msg = document.getElementById('settings-msg');
+  form.addEventListener('submit', function (e) {{
+    e.preventDefault();
+    var key = document.getElementById('or-key').value;
+    var model = document.getElementById('vision-model').value;
+    var payload = {{ vision_model: model }};
+    // Only send the key when she typed one — a blank field keeps what's saved.
+    if (key) payload.openrouter_api_key = key;
+    fetch('/api/settings', {{
+      method: 'PUT',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify(payload)
+    }})
+      .then(function (r) {{ return r.json(); }})
+      .then(function () {{
+        msg.innerHTML = '<div class="notice">✓ Saved.</div>';
+        document.getElementById('or-key').value = '';
+      }})
+      .catch(function () {{
+        msg.innerHTML = '<div class="notice">Couldn't save — please try again.</div>';
+      }});
+  }});
+}})();
+</script>
+"""
+    return layout("Settings", body)
 
 
 def new_observation_page(prefill: dict | None = None) -> str:

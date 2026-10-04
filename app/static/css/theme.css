@@ -214,6 +214,7 @@ a { color: var(--mauve-deep); }
 .field label { display: block; font-weight: 600; margin-bottom: 0.35rem; color: var(--cocoa); }
 .field input[type="text"],
 .field input[type="number"],
+.field input[type="password"],
 .field input[type="datetime-local"],
 .field textarea {
   width: 100%;

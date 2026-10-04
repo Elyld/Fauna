@@ -18,8 +18,9 @@ from sqlalchemy.orm import Session
 from app import birdnet
 from app import inat
 from app import pages
+from app import vision_id
 from app.database import UPLOAD_DIR, get_session, init_db
-from app.models import Observation
+from app.models import Observation, Setting
 from app.version import APP_NAME, VERSION
 
 
@@ -120,6 +121,70 @@ def health():
     return {"ok": True, "app": APP_NAME, "version": VERSION}
 
 
+# ---------------------------------------------------------------------------
+# Settings (key/value store; secrets are never echoed back to the client)
+# ---------------------------------------------------------------------------
+
+PUBLIC_SETTINGS = {"vision_model"}
+SECRET_SETTINGS = {"openrouter_api_key"}
+
+
+def get_setting(session: Session, key: str, default: str | None = None) -> str | None:
+    row = session.get(Setting, key)
+    if row is None or row.value is None:
+        return default
+    return row.value
+
+
+def set_setting(session: Session, key: str, value: str | None) -> None:
+    row = session.get(Setting, key)
+    if row is None:
+        session.add(Setting(key=key, value=value))
+    else:
+        row.value = value
+    session.commit()
+
+
+@app.get("/api/settings")
+def get_settings(session: Session = Depends(get_session)):
+    out: dict[str, str | bool | None] = {}
+    for key in sorted(PUBLIC_SETTINGS):
+        out[key] = get_setting(session, key)
+    for key in sorted(SECRET_SETTINGS):
+        out[f"{key}_configured"] = bool(get_setting(session, key))
+    return out
+
+
+class SettingsIn(BaseModel):
+    openrouter_api_key: str | None = None  # empty string clears the stored key
+    vision_model: str | None = None
+
+
+@app.put("/api/settings")
+def put_settings(payload: SettingsIn, session: Session = Depends(get_session)):
+    if payload.openrouter_api_key is not None:
+        set_setting(session, "openrouter_api_key", payload.openrouter_api_key.strip() or None)
+    if payload.vision_model is not None:
+        set_setting(
+            session,
+            "vision_model",
+            payload.vision_model.strip() or vision_id.DEFAULT_VISION_MODEL,
+        )
+    return get_settings(session)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(session: Session = Depends(get_session)):
+    return pages.settings_page(
+        {
+            "openrouter_api_key_configured": bool(get_setting(session, "openrouter_api_key")),
+            "vision_model": get_setting(session, "vision_model")
+            or vision_id.DEFAULT_VISION_MODEL,
+            "default_vision_model": vision_id.DEFAULT_VISION_MODEL,
+        }
+    )
+
+
 @app.get("/api/observations")
 def list_observations(session: Session = Depends(get_session)):
     obs = session.query(Observation).order_by(Observation.id.desc()).all()
@@ -201,14 +266,60 @@ def species_search(q: str = Query(..., min_length=1), per_page: int = Query(10, 
 MAX_IDENTIFY_BYTES = 10 * 1024 * 1024
 
 
-@app.post("/api/identify")
-def identify_species(file: UploadFile = File(...)):
-    """Photo ID: score an uploaded photo with iNaturalist computer vision.
+VISION_ERROR_TO_CLIENT = {
+    "no_key": "not_connected",
+    "parse_failed": "vision_parse_failed",
+    "api_error": "vision_unreachable",
+    "no_animal": "no_animal_found",
+}
 
-    Always returns 200 with a `pending_photo` reference (the uploaded file,
-    kept server-side so the sighting form can claim it later). `suggestions`
-    is empty and `error` is set when photo ID isn't connected or iNaturalist
-    is unreachable — the caller should fall back to manual entry.
+
+def _enrich_vision_candidate(candidate: dict) -> dict:
+    """Attach iNaturalist canonical data to a vision-model candidate.
+
+    The taxonomy lookup needs no auth. Returns the same card shape the
+    /identify UI renders (taxon_id, common_name, scientific_name, rank,
+    combined_score, photo_url).
+    """
+    query = candidate.get("scientific_name") or candidate.get("common_name") or ""
+    taxon: dict | None = None
+    try:
+        matches = inat.search_taxa(query, per_page=3)
+    except httpx.HTTPError:
+        matches = []
+    if matches:
+        sci = (candidate.get("scientific_name") or "").lower()
+        taxon = next(
+            (m for m in matches if (m.get("scientific_name") or "").lower() == sci),
+            matches[0],
+        )
+    return {
+        "taxon_id": taxon.get("id") if taxon else None,
+        "common_name": (taxon.get("common_name") if taxon else None)
+        or candidate.get("common_name"),
+        "scientific_name": (taxon.get("scientific_name") if taxon else None)
+        or candidate.get("scientific_name"),
+        "rank": taxon.get("rank") if taxon else None,
+        "vision_score": None,
+        "combined_score": candidate.get("confidence"),
+        "photo_url": taxon.get("photo_url") if taxon else None,
+        "notes": candidate.get("notes"),
+    }
+
+
+@app.post("/api/identify")
+def identify_species(file: UploadFile = File(...), session: Session = Depends(get_session)):
+    """Photo ID for an uploaded photo.
+
+    Primary path: an OpenRouter vision model names the animal (the
+    household's key lives server-side in Settings and never expires);
+    iNaturalist's free taxonomy data then enriches each candidate.
+    Fallback: the legacy iNaturalist computer-vision endpoint, only when
+    INAT_API_TOKEN is configured (its tokens expire after 24 hours).
+    With neither configured, suggestions are empty and `error` is
+    "not_connected" — the photo is still kept for manual logging.
+
+    Always returns 200 with a `pending_photo` reference.
     """
     ext = Path(file.filename or "").suffix.lower()[:10]
     if ext not in ALLOWED_PHOTO_EXTS:
@@ -231,14 +342,29 @@ def identify_species(file: UploadFile = File(...)):
             "error": error,
         }
 
-    try:
-        suggestions = inat.identify_image(data, file.filename or "photo.jpg")
-    except inat.INatAuthError as exc:
-        # Friendly, non-technical: the household admin connects this once.
-        return _result([], error="not_connected" if exc.reason == "no_token" else "token_expired")
-    except httpx.HTTPError:
-        return _result([], error="inat_unreachable")
-    return _result(suggestions)
+    api_key = get_setting(session, "openrouter_api_key")
+    if api_key:
+        model = get_setting(session, "vision_model") or vision_id.DEFAULT_VISION_MODEL
+        try:
+            candidates = vision_id.identify_with_vision(
+                data, file.filename or "photo.jpg", api_key, model
+            )
+        except vision_id.VisionIDError as exc:
+            return _result([], error=VISION_ERROR_TO_CLIENT.get(exc.reason, "vision_unreachable"))
+        except Exception:  # noqa: BLE001 — model hiccups become a friendly message
+            return _result([], error="vision_unreachable")
+        return _result([_enrich_vision_candidate(c) for c in candidates])
+
+    if inat.get_api_token():
+        try:
+            suggestions = inat.identify_image(data, file.filename or "photo.jpg")
+        except inat.INatAuthError as exc:
+            return _result([], error="not_connected" if exc.reason == "no_token" else "token_expired")
+        except httpx.HTTPError:
+            return _result([], error="inat_unreachable")
+        return _result(suggestions)
+
+    return _result([], error="not_connected")
 
 
 @app.get("/identify", response_class=HTMLResponse)

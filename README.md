@@ -27,8 +27,8 @@ Data lives in `./data` (SQLite) and `./photos` (observation pictures) — both a
 - [x] Photo uploads served at `/photos`
 - [x] Species search/autocomplete backed by iNaturalist (`GET /api/species/search?q=robin`)
 - [x] Pink-themed web UI: home (`/`), observations (`/observations`), log-a-sighting form with iNaturalist autocomplete (`/observations/new`)
-- [x] Photo ID (`/identify`): upload a photo → iNaturalist computer-vision suggestions → confirm → prefilled sighting form (needs `INAT_API_TOKEN`, see below)
-- [ ] Bird sound ID (`/identify-audio`): record/upload a clip → BirdNET analysis → suggestions → prefilled sighting form
+- [x] Photo ID (`/identify`): upload a photo → vision-model suggestions → confirm → prefilled sighting form (needs an OpenRouter key in Settings, see below)
+- [x] Bird sound ID (`/identify-audio`): record/upload a clip → BirdNET analysis → suggestions → prefilled sighting form
 - [ ] Range maps per species (iNaturalist/GBIF occurrence data)
 - [ ] Life list + stats
 - [ ] Photo gallery
@@ -42,19 +42,31 @@ Species identification runs on the public [iNaturalist API](https://api.inatural
 
 ## Photo ID setup
 
-The 🔍 Identify page scores photos with iNaturalist's computer vision
-(`POST /v1/computervision/score_image`). That endpoint requires an API token:
+The 🔍 Identify page names the animal in a photo with a vision model through
+[OpenRouter](https://openrouter.ai). iNaturalist's own computer-vision
+endpoint isn't used because it needs a per-user token that expires every 24
+hours (a daily copy-paste chore); an OpenRouter key is pasted once and never
+expires.
 
-1. Log in at [inaturalist.org](https://www.inaturalist.org) and register an
-   OAuth application (any name, e.g. "Fauna").
-2. Get a token from <https://www.inaturalist.org/users/api_token>.
-3. Set it as `INAT_API_TOKEN` in the app's environment (e.g. in
-   `docker-compose.yml`) and restart.
+Setup (one time):
 
-Heads-up: iNaturalist tokens expire after 24 hours, so this is a daily
-copy-paste until iNaturalist offers longer-lived tokens. Without a token the
-Identify page still works — it saves the photo and falls back to manual entry
-with a friendly notice instead of suggestions.
+1. Open Fauna's ⚙️ Settings page.
+2. Paste an OpenRouter API key (the same kind Verdant uses) and save. The key
+   is stored on the server and is never shown back in the UI.
+3. The vision model defaults to `google/gemma-4-31b-it:free` — a free model,
+   so photo ID costs nothing. Free models can be slow or rate-limited; if one
+   ever flakes, a cheap paid vision model costs a fraction of a cent per photo
+   and can be typed into the same Settings field.
+
+How it works: the model names the animal (up to 3 ranked guesses with
+confidence), iNaturalist's free no-login taxonomy data attaches canonical
+names, thumbnails, and links, and she confirms the pick before anything is
+saved — the AI is a suggester, never the decider.
+
+Legacy fallback: if no OpenRouter key is configured but `INAT_API_TOKEN` is
+set in the environment, the Identify page falls back to iNaturalist computer
+vision (tokens expire after 24 hours, so this needs daily renewing). With
+neither configured, the page saves the photo and offers manual entry.
 
 ## Sound ID setup
 
