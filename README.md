@@ -55,7 +55,24 @@ Paste that into a new Dockge stack (or just use this repo's `docker-compose.yml`
 - [ ] Range maps per species (iNaturalist/GBIF occurrence data)
 - [ ] Life list + stats
 - [ ] Photo gallery
-- [ ] Mobile-friendly quick-log
+- [x] Mobile-friendly quick-log: responsive pages, bottom tab bar, camera-first photo capture, installable PWA
+
+## Mobile + PWA
+
+Every page is responsive down to phone widths: the desktop nav gives way to a
+bottom tab bar (Home · Sightings · Identify · Sound), the sighting form leads
+with a big photo button and tucks the rest into a "More details" section, and
+inputs stay at 16px so iOS doesn't auto-zoom.
+
+Fauna is installable as an app: it serves a `manifest.json` (`/manifest.json`)
+with a teddy-bear icon, theme color, and standalone display — on Android use
+Chrome's "Add to Home screen" / "Install app", on iOS use Safari's Share →
+"Add to Home Screen".
+
+Camera capture: photo inputs use `capture="environment"`, so on phones the
+camera opens directly (gallery is still offered by the OS picker). Offline
+support (service worker + cached sightings) is future work — the app needs a
+connection for species search, photo ID, and sound ID.
 
 Demo data + screenshots: with the app running, `scripts/seed_demo.py` seeds five charming observations (real iNaturalist names and photos) via the API, and `scripts/screenshots.py` captures `docs/screenshots/` with Chrome for Testing.
 

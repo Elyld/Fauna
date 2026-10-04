@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -42,6 +42,15 @@ app.add_middleware(
 app.mount("/photos", StaticFiles(directory=str(UPLOAD_DIR)), name="photos")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/manifest.json")
+def pwa_manifest():
+    """PWA manifest (served at root; the file lives under /static)."""
+    return FileResponse(
+        str(STATIC_DIR / "manifest.json"),
+        media_type="application/manifest+json",
+    )
 
 ALLOWED_PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 

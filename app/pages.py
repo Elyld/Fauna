@@ -31,9 +31,17 @@ def layout(title: str, body: str) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{_esc(title)} · {APP_NAME}</title>
 <link rel="stylesheet" href="/static/css/theme.css">
+<link rel="icon" href="/static/img/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#96637a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="{APP_NAME}">
 </head>
 <body>
 <header class="site-header">
@@ -50,6 +58,12 @@ def layout(title: str, body: str) -> str:
 <main class="wrap">
 {body}
 </main>
+<nav class="tabbar" aria-label="Primary">
+  <a href="/">🏠<span>Home</span></a>
+  <a href="/observations">🐾<span>Sightings</span></a>
+  <a href="/identify">🔍<span>Identify</span></a>
+  <a href="/identify-audio">🎵<span>Sound</span></a>
+</nav>
 <footer>{APP_NAME} · a wildlife observation journal</footer>
 </body>
 </html>"""
@@ -136,7 +150,7 @@ def identify_page() -> str:
     <span class="big">📸</span>
     <strong>Drop a photo here, or tap to choose one</strong>
     <div class="hint" style="margin-top:0.4rem">A clear shot of the animal works best — even a phone photo through the window.</div>
-    <input type="file" id="photo-input" accept="image/*" style="display:none">
+    <input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none">
   </div>
   <div id="preview-wrap" style="display:none; margin-top:1rem">
     <img id="preview" class="photo-preview" alt="Your photo">
@@ -608,16 +622,21 @@ def new_observation_page(prefill: dict | None = None) -> str:
       <input type="hidden" id="pending-photo" value="{_esc(pending['path'])}">
       <div class="hint">From your identification — it'll be saved with this sighting.</div>
     </div>"""
-        file_hint = '<div class="hint">Or replace it:</div>'
     else:
-        photo_block = ""
-        file_hint = ""
+        photo_block = """
+    <div class="field">
+      <label class="photo-btn" for="photo">📸<span>Take a photo</span></label>
+      <input type="file" id="photo" name="photo" accept="image/*" capture="environment" style="display:none">
+      <img id="photo-preview" class="photo-preview" alt="Photo preview" style="display:none">
+      <div class="hint">Camera opens right away — or pick one from your gallery.</div>
+    </div>"""
 
     body = f"""
 <h2 class="section-title" style="margin-top:0">Log a sighting</h2>
 <div class="form-card">
   <div class="error" id="form-error"></div>
   <form id="obs-form">
+    {photo_block}
     <div class="field">
       <label for="species">What did you see?</label>
       <input type="text" id="species" name="species_name" placeholder="Start typing — e.g. squirrel" autocomplete="off" value="{species}">
@@ -625,35 +644,34 @@ def new_observation_page(prefill: dict | None = None) -> str:
       <div class="autocomplete" id="ac-list"></div>
       <div class="hint">Suggestions come from the iNaturalist wildlife database.</div>
     </div>
-    <label class="checkbox-row">
-      <input type="checkbox" id="needs-id" {needs_id_checked}>
-      <span class="cb-text"><strong>I'm not sure what this is.</strong><br>Flag it so we remember the ID still needs confirming.</span>
-    </label>
-    <div class="form-row">
-      <div class="field">
-        <label for="count">How many?</label>
-        <input type="number" id="count" name="count" min="1" value="1">
+    <details class="details-card">
+      <summary>More details</summary>
+      <div class="details-body">
+        <label class="checkbox-row">
+          <input type="checkbox" id="needs-id" {needs_id_checked}>
+          <span class="cb-text"><strong>I'm not sure what this is.</strong><br>Flag it so we remember the ID still needs confirming.</span>
+        </label>
+        <div class="form-row">
+          <div class="field">
+            <label for="count">How many?</label>
+            <input type="number" id="count" name="count" min="1" value="1">
+          </div>
+          <div class="field">
+            <label for="observed_at">When?</label>
+            <input type="datetime-local" id="observed_at" name="observed_at">
+          </div>
+        </div>
+        <div class="field">
+          <label for="location">Where?</label>
+          <input type="text" id="location" name="location_name" placeholder="Backyard oak, riverside trail…">
+        </div>
+        <div class="field">
+          <label for="notes">Notes</label>
+          <textarea id="notes" name="notes" placeholder="What was it doing? Anything charming?">{notes_prefill}</textarea>
+        </div>
       </div>
-      <div class="field">
-        <label for="observed_at">When?</label>
-        <input type="datetime-local" id="observed_at" name="observed_at">
-      </div>
-    </div>
-    <div class="field">
-      <label for="location">Where?</label>
-      <input type="text" id="location" name="location_name" placeholder="Backyard oak, riverside trail…">
-    </div>
-    <div class="field">
-      <label for="notes">Notes</label>
-      <textarea id="notes" name="notes" placeholder="What was it doing? Anything charming?">{notes_prefill}</textarea>
-    </div>
-    {photo_block}
-    <div class="field">
-      <label for="photo">{"Add a photo" if not pending else "Photo"}</label>
-      {file_hint}
-      <input type="file" id="photo" name="photo" accept="image/*">
-    </div>
-    <button class="btn" type="submit">Save sighting</button>
+    </details>
+    <button class="btn btn-big" type="submit">Save sighting</button>
   </form>
 </div>
 <script>
@@ -705,6 +723,17 @@ def new_observation_page(prefill: dict | None = None) -> str:
     if (!list.contains(e.target) && e.target !== input) close();
   }});
 
+  // Photo preview for the big camera button.
+  var photoInput = document.getElementById('photo');
+  var photoPreview = document.getElementById('photo-preview');
+  if (photoInput && photoPreview) {{
+    photoInput.addEventListener('change', function () {{
+      if (!photoInput.files.length) return;
+      photoPreview.src = URL.createObjectURL(photoInput.files[0]);
+      photoPreview.style.display = '';
+    }});
+  }}
+
   document.getElementById('obs-form').addEventListener('submit', function (e) {{
     e.preventDefault();
     var err = document.getElementById('form-error');
@@ -730,7 +759,8 @@ def new_observation_page(prefill: dict | None = None) -> str:
     }}
     // If she picked a brand-new file now, upload it the classic way;
     // otherwise the pending photo from Identify rides along in the payload.
-    var file = document.getElementById('photo').files[0];
+    var photoInput = document.getElementById('photo');
+    var file = photoInput && photoInput.files[0];
     saveObservation()
       .then(function (res) {{
         if (!res.ok) throw new Error('Could not save the sighting.');
