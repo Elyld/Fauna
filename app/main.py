@@ -3,8 +3,13 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+import logging
 import shutil
+import sqlite3
+import tempfile
 import uuid
+import zipfile
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -18,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from app import birdnet
 from app import ebird_import
@@ -25,9 +31,11 @@ from app import inat
 from app import pages
 from app import range_map
 from app import vision_id
-from app.database import UPLOAD_DIR, get_session, init_db
+from app.database import DATABASE_URL, UPLOAD_DIR, SessionLocal, get_session, init_db
 from app.models import Observation, Setting
 from app.version import APP_NAME, VERSION
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -289,6 +297,126 @@ def export_observations_csv(session: Session = Depends(get_session)):
         content=buf.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=fauna-observations.csv"},
+    )
+
+
+BACKUP_PHOTO_WARN_BYTES = 500 * 1024 * 1024
+
+
+def _sqlite_db_path() -> Path:
+    """Filesystem path of the live SQLite database."""
+    if not DATABASE_URL.startswith("sqlite:///"):
+        raise HTTPException(500, "Backups require the SQLite database")
+    return Path(DATABASE_URL[len("sqlite:///") :])
+
+
+def _build_backup_readme(stamp: str) -> str:
+    return (
+        f"Fauna backup — created {stamp}\n"
+        "\n"
+        "What's inside this zip:\n"
+        "  fauna.db          The full Fauna database (every sighting, setting,\n"
+        "                  and life-list entry). Open it with any SQLite\n"
+        "                  browser if you ever need to.\n"
+        "  photos/           Every sighting photo, as uploaded.\n"
+        "  observations.json Every sighting in plain, human-readable JSON —\n"
+        "                  readable even if fauna.db won't open.\n"
+        "  settings.json     Your saved settings (photo-ID model etc.). API\n"
+        "                  keys are NOT included — you'll need to paste them\n"
+        "                  again after a restore.\n"
+        "\n"
+        "How to restore:\n"
+        "  1. Stop the Fauna app (stop the Docker container).\n"
+        "  2. Replace fauna.db with the one from this zip, and replace the\n"
+        "     contents of the photos folder with the photos/ folder from\n"
+        "     this zip. (Keep a copy of the current files first, just in\n"
+        "     case.)\n"
+        "  3. Start the app again. Everything is back.\n"
+        "\n"
+        "Keep this zip somewhere safe — it's everything.\n"
+    )
+
+
+@app.get("/api/backup")
+def download_backup():
+    """Full backup download: database snapshot + all photos + JSON dumps."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    zip_name = f"fauna-backup-{stamp}.zip"
+    tmp = Path(tempfile.mkdtemp(prefix="fauna-backup-"))
+
+    def cleanup() -> None:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    try:
+        # 1. Consistent live snapshot of the database. VACUUM INTO copies a
+        #    live SQLite database (WAL included) into one clean file — a raw
+        #    file copy could miss the -wal journal.
+        snapshot = tmp / "fauna.db"
+        db_path = _sqlite_db_path()
+        raw = sqlite3.connect(str(db_path))
+        try:
+            raw.isolation_level = None  # autocommit; VACUUM needs no open txn
+            quoted = str(snapshot).replace("'", "''")
+            raw.execute(f"VACUUM INTO '{quoted}'")
+        finally:
+            raw.close()
+
+        # 2. Photos. Big libraries are allowed through — just warn server-side.
+        photo_files = sorted(p for p in UPLOAD_DIR.iterdir() if p.is_file())
+        photo_bytes = sum(p.stat().st_size for p in photo_files)
+        if photo_bytes > BACKUP_PHOTO_WARN_BYTES:
+            logger.warning(
+                "Backup photo payload is %.1f MB (over the 500MB note threshold); "
+                "generating anyway",
+                photo_bytes / (1024 * 1024),
+            )
+
+        # 3. Human-readable dumps: every sighting + settings (no secret values).
+        with SessionLocal() as session:
+            observations = [
+                _obs_to_dict(o)
+                for o in session.query(Observation).order_by(Observation.id.asc()).all()
+            ]
+            settings: dict[str, str | bool | None] = {}
+            for key in sorted(PUBLIC_SETTINGS):
+                settings[key] = get_setting(session, key)
+            for key in sorted(SECRET_SETTINGS):
+                settings[key] = (
+                    "<configured>" if get_setting(session, key) else None
+                )
+        (tmp / "observations.json").write_text(
+            json.dumps(
+                {
+                    "app": APP_NAME,
+                    "exported_at": datetime.now().isoformat(timespec="seconds"),
+                    "observations": observations,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (tmp / "settings.json").write_text(
+            json.dumps(settings, indent=2), encoding="utf-8"
+        )
+        (tmp / "README.txt").write_text(_build_backup_readme(stamp), encoding="utf-8")
+
+        zip_path = tmp / zip_name
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(tmp / "fauna.db", "fauna.db")
+            zf.write(tmp / "observations.json", "observations.json")
+            zf.write(tmp / "settings.json", "settings.json")
+            zf.write(tmp / "README.txt", "README.txt")
+            for photo in photo_files:
+                zf.write(photo, f"photos/{photo.name}")
+    except Exception:
+        cleanup()
+        raise
+
+    return FileResponse(
+        str(zip_path),
+        media_type="application/zip",
+        filename=zip_name,
+        background=BackgroundTask(cleanup),
     )
 
 

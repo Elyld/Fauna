@@ -694,6 +694,55 @@ def settings_page(current: dict | None = None) -> str:
   </form>
   <div id="settings-msg" style="margin-top:0.75rem"></div>
 </div>
+<div class="form-card">
+  <h3 style="margin-top:0">💾 Backup</h3>
+  <p class="hint" style="margin-top:0">
+    Download everything — every sighting, every photo, and the whole database —
+    as one zip file. Keep it somewhere safe.
+  </p>
+  <div class="cta-row" style="justify-content:flex-start">
+    <button class="btn" type="button" id="backup-btn">⬇️ Download backup</button>
+  </div>
+  <div id="backup-msg" style="margin-top:0.75rem"></div>
+</div>
+<script>
+(function () {{
+  var btn = document.getElementById('backup-btn');
+  var msg = document.getElementById('backup-msg');
+  btn.addEventListener('click', function () {{
+    btn.disabled = true;
+    btn.textContent = '⏳ Gathering everything…';
+    msg.innerHTML = '';
+    fetch('/api/backup')
+      .then(function (r) {{
+        if (!r.ok) throw new Error('backup failed');
+        var disp = r.headers.get('Content-Disposition') || '';
+        var m = /filename="?([^";]+)"?/.exec(disp);
+        return r.blob().then(function (blob) {{
+          return {{ blob: blob, name: m ? m[1] : 'fauna-backup.zip' }};
+        }});
+      }})
+      .then(function (dl) {{
+        var url = URL.createObjectURL(dl.blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = dl.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () {{ URL.revokeObjectURL(url); }}, 5000);
+        msg.innerHTML = '<div class="notice">✓ Backup downloaded.</div>';
+      }})
+      .catch(function () {{
+        msg.innerHTML = '<div class="notice">Couldn't build the backup — please try again.</div>';
+      }})
+      .finally(function () {{
+        btn.disabled = false;
+        btn.textContent = '⬇️ Download backup';
+      }});
+  }});
+}})();
+</script>
 <script>
 (function () {{
   var form = document.getElementById('settings-form');

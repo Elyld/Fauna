@@ -110,6 +110,22 @@ if the map library can't load.
 by species or search, click any photo for a full-size lightbox with the
 species, date, and location. Sightings without photos simply don't appear.
 
+## Backups
+
+On the ⚙️ Settings page, the **💾 Backup** section's "Download backup" button
+saves everything as one zip file (`fauna-backup-YYYYMMDD-HHMM.zip`):
+
+- `fauna.db` — a consistent snapshot of the whole database, taken with
+  `VACUUM INTO` so it's correct even while the app is running
+- `photos/` — every sighting photo
+- `observations.json` — every sighting in plain, human-readable JSON
+- `settings.json` — your settings (API keys are never included)
+- `README.txt` — restore steps
+
+To restore: stop the app, replace `fauna.db` and the `photos/` folder with
+the copies from the zip, and start the app again. Large photo libraries back
+up fine — the server just notes it in the logs if photos exceed ~500 MB.
+
 ## Species data
 
 Species identification runs on the public [iNaturalist API](https://api.inaturalist.org/v1/docs/) — the open equivalent of what powers Merlin: a taxonomy database covering essentially all wildlife, plus millions of observations for range/location data. No API key needed for the read endpoints used here. eBird/GBIF are candidates for later phases.
