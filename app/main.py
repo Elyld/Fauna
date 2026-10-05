@@ -446,8 +446,12 @@ def delete_observation(obs_id: int, session: Session = Depends(get_session)):
     obs = session.get(Observation, obs_id)
     if obs is None:
         raise HTTPException(404, "observation not found")
+    photo = obs.photo_path
     session.delete(obs)
     session.commit()
+    if photo:
+        # don't orphan the image file on disk
+        (UPLOAD_DIR / Path(photo).name).unlink(missing_ok=True)
     return {"deleted": obs_id}
 
 

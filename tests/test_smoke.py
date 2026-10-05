@@ -69,3 +69,21 @@ def test_photo_upload():
     r = client.delete(f"/api/observations/{obs_id}")
     assert r.status_code == 200
     assert r.json()["deleted"] == obs_id
+
+
+def test_delete_removes_photo_file():
+    r = client.post("/api/observations", json={"species_name": "Test Mole"})
+    obs_id = r.json()["id"]
+    fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    r = client.post(
+        f"/api/observations/{obs_id}/photo",
+        files={"file": ("mole.png", fake_png, "image/png")},
+    )
+    assert r.status_code == 200, r.text
+    photo_url = r.json()["photo_url"]
+    photo_file = UPLOAD_DIR / Path(photo_url).name
+    assert photo_file.exists()
+
+    r = client.delete(f"/api/observations/{obs_id}")
+    assert r.status_code == 200
+    assert not photo_file.exists(), "photo file orphaned after delete"
