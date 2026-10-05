@@ -30,6 +30,7 @@ from app import birdnet
 from app import ebird_import
 from app import inat
 from app import nearby as nearby_mod
+from app import openrouter_models
 from app import pages
 from app import range_map
 from app import vision_id
@@ -263,6 +264,16 @@ def put_settings(payload: SettingsIn, session: Session = Depends(get_session)):
     if payload.home_name is not None:
         set_setting(session, "home_name", payload.home_name.strip() or None)
     return get_settings(session)
+
+
+@app.get("/api/openrouter-models")
+def api_openrouter_models():
+    """Vision-capable OpenRouter models (id, name, free flag), cached 24h.
+
+    Never raises — the Settings UI falls back to a plain text field when
+    the catalog is unreachable.
+    """
+    return {"models": openrouter_models.get_vision_models()}
 
 
 def get_home_location(session: Session) -> dict:

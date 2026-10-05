@@ -165,6 +165,9 @@ derived when the page loads, so there's nothing to keep in sync.
     <td><img src="docs/screenshots/backup.png" width="400"><br><em>💾 One-click full backup in Settings</em></td>
     <td><img src="docs/screenshots/mobile-map.png" width="200"><br><em>🗺️ Map on mobile, with the bottom tab bar</em></td>
   </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/settings.png" width="600"><br><em>⚙️ Settings — vision model dropdown with free-models filter</em></td>
+  </tr>
 </table>
 
 More in `docs/screenshots/` (home, observations, life list, stats, identify,
@@ -203,10 +206,12 @@ Setup (one time):
 1. Open Fauna's ⚙️ Settings page.
 2. Paste an OpenRouter API key (the same kind Verdant uses) and save. The key
    is stored on the server and is never shown back in the UI.
-3. The vision model defaults to `google/gemma-4-31b-it:free` — a free model,
-   so photo ID costs nothing. Free models can be slow or rate-limited; if one
-   ever flakes, a cheap paid vision model costs a fraction of a cent per photo
-   and can be typed into the same Settings field.
+3. Pick a vision model from the dropdown — it lists OpenRouter's vision-capable
+   models (free ones marked), with a "Free models only" filter and a "Custom…"
+   option for typing any model id by hand. It defaults to
+   `google/gemma-4-31b-it:free`, so photo ID costs nothing. Free models can be
+   slow or rate-limited; if one ever flakes, a cheap paid vision model costs a
+   fraction of a cent per photo.
 
 How it works: the model names the animal (up to 3 ranked guesses with
 confidence), iNaturalist's free no-login taxonomy data attaches canonical

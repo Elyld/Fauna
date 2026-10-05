@@ -804,11 +804,23 @@ def settings_page(current: dict | None = None) -> str:
       {key_status}
     </div>
     <div class="field">
-      <label for="vision-model">Vision model</label>
-      <input type="text" id="vision-model" value="{vision_model}">
+      <label for="vision-model-select">Vision model</label>
+      <select id="vision-model-select">
+        <option value="">Loading models…</option>
+      </select>
+      <label class="checkbox-row" style="margin-top:0.5rem">
+        <input type="checkbox" id="vision-model-free-only" checked>
+        <span class="cb-text">Free models only</span>
+      </label>
+      <input type="text" id="vision-model" value="{vision_model}"
+             style="display:none;margin-top:0.5rem"
+             placeholder="e.g. google/gemma-4-31b-it:free">
       <div class="hint">Default: <code>{default_model}</code> (free). Free
       models can be slow or rate-limited — a cheap paid vision model costs a
-      fraction of a cent per photo if one is ever needed.</div>
+      fraction of a cent per photo if one is ever needed. Pick from the list
+      (free ones are marked), or choose "Custom…" to type any model id from
+      <a href="https://openrouter.ai/models" target="_blank"
+         rel="noopener">openrouter.ai/models</a>.</div>
     </div>
     <div class="cta-row" style="justify-content:flex-start">
       <button class="btn" type="submit">Save settings</button>
@@ -941,6 +953,78 @@ def settings_page(current: dict | None = None) -> str:
       {{ enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }}
     );
   }});
+}})();
+</script>
+<script>
+(function () {{
+  var sel = document.getElementById('vision-model-select');
+  var inp = document.getElementById('vision-model');
+  var freeOnly = document.getElementById('vision-model-free-only');
+  var freeRow = freeOnly.closest('.checkbox-row');
+  var cache = [];
+
+  // Graceful fallback: catalog unreachable — plain text input instead.
+  function showInput() {{
+    inp.style.display = '';
+    sel.style.display = 'none';
+    if (freeRow) freeRow.style.display = 'none';
+  }}
+
+  function renderOptions() {{
+    var list = cache.filter(function (m) {{ return !freeOnly.checked || m.free; }});
+    if (!list.length) {{
+      showInput();
+      return;
+    }}
+    var current = inp.value.trim();
+    sel.innerHTML = '';
+    list.forEach(function (m) {{
+      var opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.free ? m.name + ' (free)' : m.name;
+      sel.appendChild(opt);
+    }});
+    var custom = document.createElement('option');
+    custom.value = '__custom';
+    custom.textContent = 'Custom model id…';
+    sel.appendChild(custom);
+    var inList = list.some(function (m) {{ return m.id === current; }});
+    if (inList) {{
+      sel.value = current;
+      inp.style.display = 'none';
+    }} else {{
+      sel.value = '__custom';
+      inp.value = current;
+      inp.style.display = '';
+    }}
+    sel.style.display = '';
+    if (freeRow) freeRow.style.display = '';
+  }}
+
+  sel.addEventListener('change', function () {{
+    if (sel.value === '__custom') {{
+      inp.style.display = '';
+      inp.focus();
+    }} else {{
+      inp.value = sel.value;
+      inp.style.display = 'none';
+    }}
+  }});
+  freeOnly.addEventListener('change', renderOptions);
+
+  fetch('/api/openrouter-models')
+    .then(function (r) {{
+      if (!r.ok) throw new Error('no catalog');
+      return r.json();
+    }})
+    .then(function (data) {{
+      cache = (data && data.models) || [];
+      if (!cache.length) throw new Error('empty catalog');
+      renderOptions();
+    }})
+    .catch(function () {{
+      showInput();
+    }});
 }})();
 </script>
 <script>
