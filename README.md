@@ -53,7 +53,11 @@ Paste that into a new Dockge stack (or just use this repo's `docker-compose.yml`
 - [x] Photo ID (`/identify`): upload a photo → vision-model suggestions → confirm → prefilled sighting form (needs an OpenRouter key in Settings, see below)
 - [x] Bird sound ID (`/identify-audio`): record/upload a clip → BirdNET analysis → suggestions → prefilled sighting form
 - [ ] Range maps per species (iNaturalist/GBIF occurrence data)
-- [ ] Life list + stats
+- [x] Life list (`/life-list`): one row per species ever logged, sortable by most recent / most seen / A–Z
+- [x] Stats (`/stats`): sightings-per-month bars + yearly activity heatmap
+- [x] Observation search & "needs ID" filter on `/observations` (+ `?q=` / `?needs_id=` on the JSON API)
+- [x] Edit sightings (`/observations/{id}/edit`, `PUT /api/observations/{id}`)
+- [x] CSV export (`GET /api/observations/export.csv`, "Export CSV" button)
 - [ ] Photo gallery
 - [x] Mobile-friendly quick-log: responsive pages, bottom tab bar, camera-first photo capture, installable PWA
 

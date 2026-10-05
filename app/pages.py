@@ -49,6 +49,8 @@ def layout(title: str, body: str) -> str:
   <nav>
     <a href="/">Home</a>
     <a href="/observations">Observations</a>
+    <a href="/life-list">🦌 Life list</a>
+    <a href="/stats">📊 Stats</a>
     <a href="/identify">🔍 Identify</a>
     <a href="/identify-audio">🎵 Sound ID</a>
     <a href="/observations/new">+ Log a sighting</a>
@@ -69,7 +71,7 @@ def layout(title: str, body: str) -> str:
 </html>"""
 
 
-def card(obs: dict) -> str:
+def card(obs: dict, show_edit: bool = False) -> str:
     photo = obs.get("photo_url")
     if photo:
         img = f'<img src="{_esc(photo)}" alt="{_esc(obs.get("species_name"))}">'
@@ -80,6 +82,11 @@ def card(obs: dict) -> str:
     needs_id = '<span class="needs-id-badge">🧐 needs ID</span>' if obs.get("needs_id") else ""
     notes = obs.get("notes") or ""
     snippet = _esc(notes[:110] + ("…" if len(notes) > 110 else ""))
+    edit = (
+        f'<div class="card-actions"><a class="edit-link" href="/observations/{obs.get("id")}/edit">✏️ Edit</a></div>'
+        if show_edit and obs.get("id")
+        else ""
+    )
     return f"""
 <article class="card">
   {img}
@@ -88,6 +95,7 @@ def card(obs: dict) -> str:
     <div class="sci">{_esc(obs.get("scientific_name") or "")}</div>
     <div class="meta">📅 {_esc(_fmt_date(obs.get("observed_at")))} · 📍 {_esc(obs.get("location_name") or "Somewhere lovely")}</div>
     {f'<div class="notes">{snippet}</div>' if snippet else ""}
+    {edit}
   </div>
 </article>"""
 
@@ -106,7 +114,7 @@ def home_page(total: int, species: int, recent: list[dict]) -> str:
   <p class="tagline">Every squirrel, songbird, and bunny — noticed, named, and remembered.</p>
   <div class="stats">
     <div class="stat"><div class="num">{total}</div><div class="label">observations</div></div>
-    <div class="stat"><div class="num">{species}</div><div class="label">species</div></div>
+    <a class="stat stat-link" href="/life-list"><div class="num">{species}</div><div class="label">species 🦌</div></a>
   </div>
   <div class="cta-row">
     <a class="btn" href="/identify">🔍 What did I see?</a>
@@ -121,19 +129,125 @@ def home_page(total: int, species: int, recent: list[dict]) -> str:
     return layout("Home", body)
 
 
-def observations_page(observations: list[dict]) -> str:
+def observations_page(
+    observations: list[dict], q: str = "", needs_id_only: bool = False
+) -> str:
     if observations:
-        grid = '<div class="cards">\n' + "\n".join(card(o) for o in observations) + "\n</div>"
+        grid = '<div class="cards">\n' + "\n".join(
+            card(o, show_edit=True) for o in observations
+        ) + "\n</div>"
+    elif q or needs_id_only:
+        grid = (
+            '<div class="empty">No sightings match that search. '
+            '<a href="/observations">Clear the search</a> 🐾</div>'
+        )
     else:
         grid = (
             '<div class="empty">Nothing here yet. '
             '<a href="/observations/new">Log your first sighting</a> 🐇</div>'
         )
+    checked = "checked" if needs_id_only else ""
     body = f"""
 <h2 class="section-title" style="margin-top:0">Observations</h2>
+<form class="search-bar" method="get" action="/observations">
+  <input type="search" name="q" value="{_esc(q)}" placeholder="Search species, places, notes…">
+  <label class="search-check"><input type="checkbox" name="needs_id" value="true" {checked}> 🧐 Needs ID</label>
+  <button class="btn btn-secondary" type="submit">Search</button>
+  {f'<a href="/observations" class="clear-link">Clear</a>' if q or needs_id_only else ""}
+</form>
+<div class="cta-row" style="justify-content:flex-end">
+  <a class="btn btn-secondary" href="/api/observations/export.csv">⬇️ Export CSV</a>
+</div>
 {grid}
 """
     return layout("Observations", body)
+
+
+def life_list_page(rows: list[dict], sort: str = "recent") -> str:
+    def sort_link(key: str, label: str) -> str:
+        cls = "sort-active" if sort == key else ""
+        return f'<a class="{cls}" href="/life-list?sort={key}">{label}</a>'
+
+    if rows:
+        cards = []
+        for r in rows:
+            if r["photo_url"]:
+                img = f'<img src="{_esc(r["photo_url"])}" alt="{_esc(r["species_name"])}">'
+            else:
+                img = '<div class="no-photo">🦌</div>'
+            ind = f' · {r["individuals"]} seen' if r["individuals"] > 1 else ""
+            cards.append(f"""
+<article class="card life-card">
+  {img}
+  <div class="card-body">
+    <h3>{_esc(r["species_name"])}</h3>
+    <div class="sci">{_esc(r["scientific_name"] or "")}</div>
+    <div class="meta">🐾 {r["sightings"]} sighting{"s" if r["sightings"] != 1 else ""}{ind}</div>
+    <div class="meta">First: {_esc(_fmt_date(r["first_seen"]))} · Last: {_esc(_fmt_date(r["last_seen"]))}</div>
+  </div>
+</article>""")
+        grid = '<div class="cards">\n' + "\n".join(cards) + "\n</div>"
+    else:
+        grid = (
+            '<div class="empty">Your life list is empty — '
+            '<a href="/observations/new">log your first sighting</a> and it\'ll appear here! 🦌</div>'
+        )
+    body = f"""
+<h2 class="section-title" style="margin-top:0">🦌 Life list</h2>
+<p class="hint" style="margin-top:0">Every species you've ever logged, in one brag-worthy place.</p>
+<div class="sort-row">Sort: {sort_link("recent", "Most recent")} · {sort_link("most", "Most seen")} · {sort_link("alpha", "A–Z")}</div>
+{grid}
+"""
+    return layout("Life list", body)
+
+
+def _heat_class(count: int) -> str:
+    if count < 0:
+        return "pad"
+    if count == 0:
+        return "h0"
+    if count <= 2:
+        return "h1"
+    if count <= 4:
+        return "h2"
+    return "h3"
+
+
+def stats_page(data: dict) -> str:
+    months = data["months"]
+    peak = max((m["count"] for m in months), default=0)
+    bars = []
+    for m in months:
+        pct = round(m["count"] / peak * 100) if peak else 0
+        height = max(pct, 4) if m["count"] else 0
+        bars.append(
+            f'<div class="bar-col"><div class="bar" style="height:{height}%"></div>'
+            f'<div class="bar-label">{m["label"]}</div>'
+            f'<div class="bar-count">{m["count"]}</div></div>'
+        )
+    week_cols = []
+    for week in data["weeks"]:
+        cells = "".join(
+            f'<div class="heat-cell {_heat_class(c["count"])}" title="{c["date"]}: '
+            f'{c["count"] if c["count"] >= 0 else "—"}"></div>'
+            for c in week
+        )
+        week_cols.append(f'<div class="heat-week">{cells}</div>')
+    body = f"""
+<h2 class="section-title" style="margin-top:0">📊 Stats</h2>
+<h3 class="section-title">Sightings per month</h3>
+<div class="bars">
+{''.join(bars)}
+</div>
+<h3 class="section-title">Activity in {data["year"]}</h3>
+<div class="heatmap-scroll"><div class="heatmap">
+{''.join(week_cols)}
+</div></div>
+<div class="heat-legend"><span>Less</span>
+<span class="heat-cell h0"></span><span class="heat-cell h1"></span><span class="heat-cell h2"></span><span class="heat-cell h3"></span>
+<span>More</span></div>
+"""
+    return layout("Stats", body)
 
 
 def identify_page() -> str:
@@ -606,15 +720,51 @@ def settings_page(current: dict | None = None) -> str:
     return layout("Settings", body)
 
 
-def new_observation_page(prefill: dict | None = None) -> str:
-    prefill = prefill or {}
+def _datetime_local_value(iso: str | None) -> str:
+    """'2026-10-04T12:30:00' -> '2026-10-04T12:30' for datetime-local inputs."""
+    if not iso:
+        return ""
+    try:
+        return datetime.fromisoformat(iso).strftime("%Y-%m-%dT%H:%M")
+    except ValueError:
+        return ""
+
+
+def _observation_form(prefill: dict, mode: str) -> str:
+    """Shared sighting form. mode 'new' POSTs a create; 'edit' PUTs an update."""
+    is_edit = mode == "edit"
+    obs_id = prefill.get("obs_id")
     species = _esc(prefill.get("species_name") or "")
     scientific = _esc(prefill.get("scientific_name") or "")
     notes_prefill = _esc(prefill.get("notes") or "")
+    location_prefill = _esc(prefill.get("location_name") or "")
+    observed_prefill = _esc(prefill.get("observed_at") or "")
+    count_prefill = prefill.get("count") or 1
     pending = prefill.get("pending_photo")
+    existing_photo = prefill.get("existing_photo")
     needs_id_checked = "checked" if prefill.get("needs_id") else ""
+    title = "Edit sighting" if is_edit else "Log a sighting"
+    button = "Save changes" if is_edit else "Save sighting"
 
-    if pending:
+    camera_block = """
+    <div class="field">
+      <label class="photo-btn" for="photo">📸<span>Take a photo</span></label>
+      <input type="file" id="photo" name="photo" accept="image/*" capture="environment" style="display:none">
+      <img id="photo-preview" class="photo-preview" alt="Photo preview" style="display:none">
+      <div class="hint">Camera opens right away — or pick one from your gallery.</div>
+    </div>"""
+    if is_edit and existing_photo:
+        photo_block = f"""
+    <div class="field">
+      <label>Photo</label>
+      <img src="{_esc(existing_photo)}" class="photo-preview" alt="Sighting photo">
+      <label class="photo-btn" for="photo" style="margin-top:0.6rem">📸<span>Replace photo</span></label>
+      <input type="file" id="photo" name="photo" accept="image/*" capture="environment" style="display:none">
+      <img id="photo-preview" class="photo-preview" alt="New photo preview" style="display:none">
+    </div>"""
+    elif is_edit:
+        photo_block = camera_block
+    elif pending:
         photo_block = f"""
     <div class="field">
       <label>Photo</label>
@@ -623,16 +773,29 @@ def new_observation_page(prefill: dict | None = None) -> str:
       <div class="hint">From your identification — it'll be saved with this sighting.</div>
     </div>"""
     else:
-        photo_block = """
-    <div class="field">
-      <label class="photo-btn" for="photo">📸<span>Take a photo</span></label>
-      <input type="file" id="photo" name="photo" accept="image/*" capture="environment" style="display:none">
-      <img id="photo-preview" class="photo-preview" alt="Photo preview" style="display:none">
-      <div class="hint">Camera opens right away — or pick one from your gallery.</div>
-    </div>"""
+        photo_block = camera_block
+
+    if is_edit:
+        save_js = f"""
+    function saveObservation() {{
+      return fetch('/api/observations/{obs_id}', {{
+        method: 'PUT',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify(payload)
+      }}).then(function (r) {{ return r.json().then(function (b) {{ return {{ ok: r.ok, body: b }}; }}); }});
+    }}"""
+    else:
+        save_js = """
+    function saveObservation() {
+      return fetch('/api/observations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); });
+    }"""
 
     body = f"""
-<h2 class="section-title" style="margin-top:0">Log a sighting</h2>
+<h2 class="section-title" style="margin-top:0">{title}</h2>
 <div class="form-card">
   <div class="error" id="form-error"></div>
   <form id="obs-form">
@@ -654,16 +817,16 @@ def new_observation_page(prefill: dict | None = None) -> str:
         <div class="form-row">
           <div class="field">
             <label for="count">How many?</label>
-            <input type="number" id="count" name="count" min="1" value="1">
+            <input type="number" id="count" name="count" min="1" value="{count_prefill}">
           </div>
           <div class="field">
             <label for="observed_at">When?</label>
-            <input type="datetime-local" id="observed_at" name="observed_at">
+            <input type="datetime-local" id="observed_at" name="observed_at" value="{observed_prefill}">
           </div>
         </div>
         <div class="field">
           <label for="location">Where?</label>
-          <input type="text" id="location" name="location_name" placeholder="Backyard oak, riverside trail…">
+          <input type="text" id="location" name="location_name" placeholder="Backyard oak, riverside trail…" value="{location_prefill}">
         </div>
         <div class="field">
           <label for="notes">Notes</label>
@@ -671,7 +834,7 @@ def new_observation_page(prefill: dict | None = None) -> str:
         </div>
       </div>
     </details>
-    <button class="btn btn-big" type="submit">Save sighting</button>
+    <button class="btn btn-big" type="submit">{button}</button>
   </form>
 </div>
 <script>
@@ -723,7 +886,7 @@ def new_observation_page(prefill: dict | None = None) -> str:
     if (!list.contains(e.target) && e.target !== input) close();
   }});
 
-  // Photo preview for the big camera button.
+  // Photo preview for the camera button.
   var photoInput = document.getElementById('photo');
   var photoPreview = document.getElementById('photo-preview');
   if (photoInput && photoPreview) {{
@@ -750,16 +913,9 @@ def new_observation_page(prefill: dict | None = None) -> str:
       needs_id: document.getElementById('needs-id').checked,
       photo_path: pendingPhotoEl ? pendingPhotoEl.value : null
     }};
-    function saveObservation() {{
-      return fetch('/api/observations', {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify(payload)
-      }}).then(function (r) {{ return r.json().then(function (b) {{ return {{ ok: r.ok, body: b }}; }}); }});
-    }}
-    // If she picked a brand-new file now, upload it the classic way;
-    // otherwise the pending photo from Identify rides along in the payload.
-    var photoInput = document.getElementById('photo');
+    {save_js}
+    // A freshly picked file uploads the classic way after the record saves;
+    // a pending photo from Identify rides along in the payload instead.
     var file = photoInput && photoInput.files[0];
     saveObservation()
       .then(function (res) {{
@@ -778,4 +934,26 @@ def new_observation_page(prefill: dict | None = None) -> str:
 }})();
 </script>
 """
-    return layout("Log a sighting", body)
+    return layout(title, body)
+
+
+def new_observation_page(prefill: dict | None = None) -> str:
+    return _observation_form(prefill or {}, mode="new")
+
+
+def edit_observation_page(obs: dict) -> str:
+    """Prefilled form for editing an existing sighting."""
+    return _observation_form(
+        {
+            "obs_id": obs["id"],
+            "species_name": obs.get("species_name") or "",
+            "scientific_name": obs.get("scientific_name") or "",
+            "count": obs.get("count") or 1,
+            "observed_at": _datetime_local_value(obs.get("observed_at")),
+            "location_name": obs.get("location_name") or "",
+            "notes": obs.get("notes") or "",
+            "needs_id": obs.get("needs_id"),
+            "existing_photo": obs.get("photo_url"),
+        },
+        mode="edit",
+    )

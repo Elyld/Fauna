@@ -544,3 +544,115 @@ footer {
   .tabbar a span { font-size: 0.68rem; font-weight: 600; }
   .tabbar a:hover { color: var(--mauve-deep); }
 }
+
+/* ---- Quality-of-life batch: search, life list, stats, edit ---- */
+
+.search-bar {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 1rem;
+}
+.search-bar input[type="search"] {
+  flex: 1;
+  min-width: 180px;
+  padding: 0.65rem 0.9rem;
+  font-size: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+}
+.search-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.95rem;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.search-check input { width: 1.1rem; height: 1.1rem; accent-color: var(--mauve); }
+.clear-link { font-size: 0.9rem; }
+
+.card-actions { margin-top: 0.5rem; }
+.edit-link { font-size: 0.88rem; }
+
+.sort-row { margin: 0 0 1rem; color: var(--muted); }
+.sort-row a { margin: 0 0.15rem; }
+.sort-active { font-weight: 700; color: var(--mauve-deep); }
+
+.stat-link { text-decoration: none; color: inherit; display: block; }
+.stat-link:hover .num { color: var(--mauve-deep); }
+
+/* Monthly bars (pure CSS) */
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  height: 180px;
+  padding: 1rem 0.5rem 0.2rem;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 1.5rem;
+}
+.bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  min-width: 0;
+}
+.bar {
+  width: 70%;
+  max-width: 34px;
+  border-radius: 6px 6px 2px 2px;
+  background: linear-gradient(180deg, var(--bubblegum), var(--dusty-rose));
+}
+.bar-label { font-size: 0.72rem; color: var(--muted); margin-top: 0.25rem; }
+.bar-count { font-size: 0.72rem; font-weight: 700; color: var(--mauve-deep); }
+
+/* Year heatmap (GitHub-style week columns) */
+.heatmap-scroll { overflow-x: auto; }
+.heatmap {
+  display: flex;
+  gap: 3px;
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: max-content;
+  max-width: 100%;
+}
+.heat-week { display: flex; flex-direction: column; gap: 3px; }
+.heat-cell {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  background: var(--cream);
+  border: 1px solid var(--border);
+}
+.heat-cell.pad { visibility: hidden; }
+.heat-cell.h0 { background: var(--cream); }
+.heat-cell.h1 { background: #f7d3e3; }
+.heat-cell.h2 { background: var(--bubblegum); border-color: var(--bubblegum); }
+.heat-cell.h3 { background: var(--mauve-deep); border-color: var(--mauve-deep); }
+.heat-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.heat-legend .heat-cell { width: 11px; height: 11px; }
+
+@media (max-width: 700px) {
+  .bars { height: 140px; gap: 0.25rem; }
+  .bar-label { font-size: 0.6rem; }
+  .search-bar .btn { width: 100%; }
+}

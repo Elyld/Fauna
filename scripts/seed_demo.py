@@ -66,6 +66,27 @@ SPECIES = [
         "location_name": "Backyard feeder",
         "notes": "The pair showed up together, as always. He let her eat first.",
     },
+    {
+        "query": "Blue Jay",
+        "count": 1,
+        "days_ago": 20,
+        "location_name": "Backyard oak",
+        "notes": "Yelling at the squirrel. The squirrel did not care.",
+    },
+    {
+        "query": "White-tailed Deer",
+        "count": 3,
+        "days_ago": 34,
+        "location_name": "Meadow edge at dusk",
+        "notes": "Three does grazing, ears swiveling at every sound.",
+    },
+    {
+        "query": "Downy Woodpecker",
+        "count": 1,
+        "days_ago": 55,
+        "location_name": "Suet feeder",
+        "notes": "Tiny hammer working the suet like it owed him money.",
+    },
 ]
 
 

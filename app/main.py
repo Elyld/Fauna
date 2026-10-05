@@ -1,18 +1,22 @@
 """Fauna — wildlife observation journal (working name; will change)."""
 from __future__ import annotations
 
+import csv
+import io
 import shutil
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import birdnet
@@ -95,9 +99,43 @@ def index(session: Session = Depends(get_session)):
 
 
 @app.get("/observations", response_class=HTMLResponse)
-def observations_page(session: Session = Depends(get_session)):
-    obs = session.query(Observation).order_by(Observation.id.desc()).all()
-    return pages.observations_page([_obs_to_dict(o) for o in obs])
+def observations_page(
+    q: str | None = Query(None),
+    needs_id: bool = Query(False),
+    session: Session = Depends(get_session),
+):
+    query = session.query(Observation).order_by(Observation.id.desc())
+    query = _apply_observation_search(query, q, needs_id)
+    return pages.observations_page(
+        [_obs_to_dict(o) for o in query.all()],
+        q=q or "",
+        needs_id_only=needs_id,
+    )
+
+
+def _apply_observation_search(query, q: str | None, needs_id: bool):
+    """Shared text-search + needs-ID filter for the observations list."""
+    if needs_id:
+        query = query.filter(Observation.needs_id.is_(True))
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                Observation.species_name.ilike(like),
+                Observation.scientific_name.ilike(like),
+                Observation.location_name.ilike(like),
+                Observation.notes.ilike(like),
+            )
+        )
+    return query
+
+
+@app.get("/observations/{obs_id}/edit", response_class=HTMLResponse)
+def edit_observation_page(obs_id: int, session: Session = Depends(get_session)):
+    obs = session.get(Observation, obs_id)
+    if obs is None:
+        raise HTTPException(404, "observation not found")
+    return pages.edit_observation_page(_obs_to_dict(obs))
 
 
 @app.get("/observations/new", response_class=HTMLResponse)
@@ -195,9 +233,77 @@ def settings_page(session: Session = Depends(get_session)):
 
 
 @app.get("/api/observations")
-def list_observations(session: Session = Depends(get_session)):
-    obs = session.query(Observation).order_by(Observation.id.desc()).all()
-    return {"observations": [_obs_to_dict(o) for o in obs]}
+def list_observations(
+    q: str | None = Query(None),
+    needs_id: bool = Query(False),
+    session: Session = Depends(get_session),
+):
+    query = session.query(Observation).order_by(Observation.id.desc())
+    query = _apply_observation_search(query, q, needs_id)
+    return {"observations": [_obs_to_dict(o) for o in query.all()]}
+
+
+@app.get("/api/observations/export.csv")
+def export_observations_csv(session: Session = Depends(get_session)):
+    """CSV export of every sighting (Verdant-style)."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "id",
+            "species_name",
+            "scientific_name",
+            "count",
+            "observed_at",
+            "latitude",
+            "longitude",
+            "location_name",
+            "notes",
+            "photo_path",
+            "needs_id",
+            "created_at",
+        ]
+    )
+    for o in session.query(Observation).order_by(Observation.id.asc()).all():
+        d = _obs_to_dict(o)
+        writer.writerow(
+            [
+                d["id"],
+                d["species_name"],
+                d["scientific_name"],
+                d["count"],
+                d["observed_at"],
+                d["latitude"],
+                d["longitude"],
+                d["location_name"],
+                d["notes"],
+                d["photo_path"],
+                d["needs_id"],
+                d["created_at"],
+            ]
+        )
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=fauna-observations.csv"},
+    )
+
+
+@app.put("/api/observations/{obs_id}")
+def update_observation(
+    obs_id: int, payload: ObservationIn, session: Session = Depends(get_session)
+):
+    """Edit a sighting's fields. Photos are replaced via POST /photo."""
+    obs = session.get(Observation, obs_id)
+    if obs is None:
+        raise HTTPException(404, "observation not found")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        if key == "photo_path":
+            continue  # photo swaps go through the /photo endpoint
+        setattr(obs, key, value)
+    session.commit()
+    session.refresh(obs)
+    return _obs_to_dict(obs)
 
 
 @app.get("/api/observations/{obs_id}")
@@ -412,3 +518,117 @@ def identify_audio(file: UploadFile = File(...)):
 @app.get("/identify-audio", response_class=HTMLResponse)
 def identify_audio_page():
     return pages.identify_audio_page()
+
+
+# ---------------------------------------------------------------------------
+# Life list + stats
+# ---------------------------------------------------------------------------
+
+
+def _observation_day(o: Observation) -> date:
+    dt = o.observed_at or o.created_at
+    return dt.date() if dt else date.today()
+
+
+def life_list_rows(session: Session, sort: str = "recent") -> list[dict]:
+    """One row per species ever logged: thumbnail, sightings, first/last seen."""
+    groups: dict[str, dict] = {}
+    for o in session.query(Observation).order_by(Observation.id.asc()).all():
+        key = (o.species_name or "").strip().lower() or "__unknown__"
+        g = groups.setdefault(
+            key,
+            {
+                "species_name": o.species_name or "Unknown visitor",
+                "scientific_names": defaultdict(int),
+                "photo_path": None,
+                "sightings": 0,
+                "individuals": 0,
+                "first_seen": None,
+                "last_seen": None,
+            },
+        )
+        g["sightings"] += 1
+        g["individuals"] += o.count or 1
+        if o.scientific_name:
+            g["scientific_names"][o.scientific_name] += 1
+        if g["photo_path"] is None and o.photo_path:
+            g["photo_path"] = o.photo_path
+        day = _observation_day(o)
+        if g["first_seen"] is None or day < g["first_seen"]:
+            g["first_seen"] = day
+        if g["last_seen"] is None or day > g["last_seen"]:
+            g["last_seen"] = day
+    rows = []
+    for g in groups.values():
+        sci = max(g["scientific_names"], key=g["scientific_names"].get, default=None)
+        rows.append(
+            {
+                "species_name": g["species_name"],
+                "scientific_name": sci,
+                "photo_url": f"/photos/{g['photo_path']}" if g["photo_path"] else None,
+                "sightings": g["sightings"],
+                "individuals": g["individuals"],
+                "first_seen": g["first_seen"].isoformat() if g["first_seen"] else None,
+                "last_seen": g["last_seen"].isoformat() if g["last_seen"] else None,
+            }
+        )
+    if sort == "most":
+        rows.sort(key=lambda r: (-r["sightings"], r["species_name"].lower()))
+    elif sort == "alpha":
+        rows.sort(key=lambda r: r["species_name"].lower())
+    else:  # "recent"
+        rows.sort(key=lambda r: (r["last_seen"] or "", r["species_name"].lower()), reverse=True)
+    return rows
+
+
+def stats_data(session: Session) -> dict:
+    """12-month sighting bars + current-year activity heatmap."""
+    counts: dict[date, int] = defaultdict(int)
+    for o in session.query(Observation).all():
+        counts[_observation_day(o)] += 1
+
+    today = date.today()
+    months = []
+    for i in range(11, -1, -1):
+        # first day of the month, i months back
+        m = (today.month - 1 - i) % 12 + 1
+        y = today.year - ((today.month - 1 - i) // 12)
+        first = date(y, m, 1)
+        nxt = date(y + (m == 12), m % 12 + 1, 1)
+        total = sum(c for d, c in counts.items() if first <= d < nxt)
+        months.append({"label": first.strftime("%b"), "count": total})
+
+    # Year heatmap: Monday-start week columns, one cell per day.
+    jan1 = date(today.year, 1, 1)
+    start = jan1 - timedelta(days=jan1.weekday())
+    dec31 = date(today.year, 12, 31)
+    end = dec31 + timedelta(days=(6 - dec31.weekday()))
+    weeks: list[list[dict]] = []
+    d = start
+    while d <= end:
+        week = []
+        for _ in range(7):
+            in_year = d.year == today.year
+            week.append(
+                {
+                    "date": d.isoformat(),
+                    "count": counts.get(d, 0) if in_year else -1,  # -1 = pad cell
+                }
+            )
+            d += timedelta(days=1)
+        weeks.append(week)
+    return {"months": months, "weeks": weeks, "year": today.year}
+
+
+@app.get("/life-list", response_class=HTMLResponse)
+def life_list_page_route(
+    sort: str = Query("recent"), session: Session = Depends(get_session)
+):
+    if sort not in ("recent", "most", "alpha"):
+        sort = "recent"
+    return pages.life_list_page(life_list_rows(session, sort), sort)
+
+
+@app.get("/stats", response_class=HTMLResponse)
+def stats_page_route(session: Session = Depends(get_session)):
+    return pages.stats_page(stats_data(session))
