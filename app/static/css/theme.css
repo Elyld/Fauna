@@ -662,3 +662,115 @@ footer {
 .preview-table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.95rem; }
 .preview-table th, .preview-table td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); }
 .preview-table th { color: var(--teddy-dark); font-weight: 600; }
+
+/* Range maps + photo gallery */
+.range-map {
+  height: 420px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--cream-deep);
+  z-index: 0;
+}
+.map-fallback {
+  padding: 1.25rem;
+  border-radius: 14px;
+  border: 1px dashed var(--border);
+  background: var(--card);
+  color: var(--cocoa-soft);
+}
+.species-head {
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.species-photo {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  flex: none;
+}
+.species-link { color: inherit; text-decoration: none; }
+.species-link:hover { color: var(--mauve-deep); text-decoration: underline; }
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.g-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--card);
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.g-item img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+}
+.g-cap {
+  display: block;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+  color: var(--cocoa);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(74, 58, 45, 0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+.lightbox[hidden] { display: none; }
+.lightbox img {
+  max-width: min(92vw, 900px);
+  max-height: 74vh;
+  border-radius: 12px;
+  object-fit: contain;
+}
+.lightbox-cap {
+  margin-top: 0.75rem;
+  text-align: center;
+  color: var(--cream);
+}
+.lightbox-cap .sci { color: var(--cream-deep); }
+.lightbox-cap a { color: var(--bubblegum); }
+.lightbox-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: var(--cream);
+  color: var(--cocoa);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  .range-map { height: 300px; }
+  .gallery-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+  }
+  .species-head { gap: 0.9rem; }
+  .species-photo { width: 88px; height: 88px; }
+}

@@ -6,8 +6,9 @@ human-friendly layer on top of it.
 from __future__ import annotations
 
 import html
+import json
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from app.version import APP_NAME
 
@@ -53,6 +54,7 @@ def layout(title: str, body: str) -> str:
     <a href="/stats">📊 Stats</a>
     <a href="/identify">🔍 Identify</a>
     <a href="/identify-audio">🎵 Sound ID</a>
+    <a href="/gallery">🖼️ Gallery</a>
     <a href="/import">⬆️ Import</a>
     <a href="/observations/new">+ Log a sighting</a>
     <a href="/settings">⚙️ Settings</a>
@@ -157,6 +159,7 @@ def observations_page(
   {f'<a href="/observations" class="clear-link">Clear</a>' if q or needs_id_only else ""}
 </form>
 <div class="cta-row" style="justify-content:flex-end">
+  <a class="btn btn-secondary" href="/gallery">🖼️ Gallery</a>
   <a class="btn btn-secondary" href="/api/observations/export.csv">⬇️ Export CSV</a>
 </div>
 {grid}
@@ -177,11 +180,12 @@ def life_list_page(rows: list[dict], sort: str = "recent") -> str:
             else:
                 img = '<div class="no-photo">🦌</div>'
             ind = f' · {r["individuals"]} seen' if r["individuals"] > 1 else ""
+            species_href = "/species/" + quote(r["scientific_name"] or r["species_name"] or "")
             cards.append(f"""
 <article class="card life-card">
   {img}
   <div class="card-body">
-    <h3>{_esc(r["species_name"])}</h3>
+    <h3><a class="species-link" href="{_esc(species_href)}">{_esc(r["species_name"])}</a></h3>
     <div class="sci">{_esc(r["scientific_name"] or "")}</div>
     <div class="meta">🐾 {r["sightings"]} sighting{"s" if r["sightings"] != 1 else ""}{ind}</div>
     <div class="meta">First: {_esc(_fmt_date(r["first_seen"]))} · Last: {_esc(_fmt_date(r["last_seen"]))}</div>
@@ -1034,3 +1038,202 @@ async function confirmImport() {
 </script>
 """
     return layout("Import from eBird", body)
+
+
+LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+
+
+def species_page(
+    taxon: dict | None,
+    range_data: dict,
+    own_points: list[dict],
+    sightings: list[dict],
+    display_name: str,
+) -> str:
+    """Per-species detail: taxon card, range map, and her own sightings."""
+    common = (taxon or {}).get("common_name") or display_name
+    sci = (taxon or {}).get("scientific_name") or display_name
+    photo = (taxon or {}).get("photo_url")
+    wiki = (taxon or {}).get("wikipedia_url")
+    if photo:
+        img = f'<img src="{_esc(photo)}" alt="{_esc(common)}" class="species-photo">'
+    else:
+        img = '<div class="no-photo species-photo">🦌</div>'
+
+    points = range_data.get("points") or []
+    err = range_data.get("error")
+    if err == "no_taxon_match":
+        map_note = "We couldn't find this species in the wildlife database, so there's no range map for it."
+    elif err == "no_observations":
+        map_note = "The wildlife database has no mapped observations for this species yet."
+    elif err in ("lookup_failed", "fetch_failed"):
+        map_note = "The range map couldn't load right now — the wildlife database isn't answering. Try again later."
+    elif err == "no_name":
+        map_note = ""
+    else:
+        map_note = ""
+    n_inat = len(points)
+    n_mine = len(own_points)
+    if not map_note:
+        map_note = (
+            f"{n_inat} research-grade observations from the iNaturalist community"
+            + (f" · {n_mine} of your sightings pinned in brown" if n_mine else "")
+            + "."
+        )
+
+    points_json = _esc(json.dumps([[p[0], p[1]] for p in points]))
+    own_json = _esc(json.dumps(own_points))
+
+    if sightings:
+        mine = '<div class="cards">\n' + "\n".join(
+            card(o, show_edit=True) for o in sightings
+        ) + "\n</div>"
+    else:
+        mine = (
+            '<div class="empty">No sightings of this species in your journal yet. '
+            '<a href="/observations/new">Log one</a> 🐾</div>'
+        )
+
+    body = f"""
+<div class="species-head">
+  {img}
+  <div>
+    <h2 class="section-title" style="margin:0">{_esc(common)}</h2>
+    <div class="sci">{_esc(sci)}</div>
+    {f'<div class="meta"><a href="{_esc(wiki)}" target="_blank" rel="noopener">📖 Wikipedia</a></div>' if wiki else ""}
+  </div>
+</div>
+
+<h3 class="section-title">🗺️ Where they're normally seen</h3>
+<p class="hint">{_esc(map_note)}</p>
+<link rel="stylesheet" href="{LEAFLET_CSS}">
+<div id="range-map" class="range-map" role="img" aria-label="Range map"></div>
+<div id="range-map-fallback" class="map-fallback" hidden>
+  🗺️ The interactive map couldn't load (it needs the map library from the internet),
+  but the rest of this page is fine.
+</div>
+<script type="application/json" id="range-points">{points_json}</script>
+<script type="application/json" id="own-points">{own_json}</script>
+<script src="{LEAFLET_JS}"></script>
+<script>
+(function () {{
+  var fallback = document.getElementById('range-map-fallback');
+  var el = document.getElementById('range-map');
+  if (typeof L === 'undefined') {{
+    el.style.display = 'none';
+    fallback.hidden = false;
+    return;
+  }}
+  var map = L.map('range-map', {{ scrollWheelZoom: false }}).setView([39.5, -98.35], 3);
+  L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+    maxZoom: 18,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }}).addTo(map);
+  var pts = JSON.parse(document.getElementById('range-points').textContent);
+  var own = JSON.parse(document.getElementById('own-points').textContent);
+  var bounds = [];
+  pts.forEach(function (p) {{
+    L.circleMarker([p[0], p[1]], {{
+      radius: 3, color: '#b48396', fillColor: '#c99bac', fillOpacity: 0.7, weight: 1
+    }}).addTo(map);
+    bounds.push([p[0], p[1]]);
+  }});
+  own.forEach(function (p) {{
+    L.marker([p.lat, p.lng]).addTo(map).bindPopup(p.label || 'Your sighting');
+    bounds.push([p.lat, p.lng]);
+  }});
+  if (bounds.length) map.fitBounds(bounds, {{ padding: [24, 24] }});
+  map.on('focus', function () {{ map.scrollWheelZoom.enable(); }});
+  map.on('blur', function () {{ map.scrollWheelZoom.disable(); }});
+}})();
+</script>
+
+<h3 class="section-title">🐾 Your sightings</h3>
+{mine}
+"""
+    return layout(f"{common}", body)
+
+
+def gallery_page(
+    items: list[dict],
+    species_options: list[str],
+    selected_species: str = "",
+    q: str = "",
+) -> str:
+    """Photo grid with lightbox; sightings without photos are simply absent."""
+    opts = ['<option value="">All species</option>'] + [
+        f'<option value="{_esc(s)}"{" selected" if s == selected_species else ""}>{_esc(s)}</option>'
+        for s in species_options
+    ]
+    if items:
+        tiles = []
+        for o in items:
+            caption = _esc(o.get("species_name") or "Unknown visitor")
+            sub = _esc(
+                " · ".join(
+                    x
+                    for x in [
+                        _fmt_date(o.get("observed_at")),
+                        o.get("location_name") or "",
+                    ]
+                    if x and x != "—"
+                )
+            )
+            view_href = "/observations?" + urlencode(
+                {"q": o.get("species_name") or ""}
+            ) if o.get("species_name") else "/observations"
+            tiles.append(f"""
+<button class="g-item" data-full="{_esc(o.get("photo_url"))}"
+        data-caption="{caption}" data-sub="{sub}" data-view="{_esc(view_href)}">
+  <img src="{_esc(o.get("photo_url"))}" alt="{caption}" loading="lazy">
+  <span class="g-cap">{caption}</span>
+</button>""")
+        grid = '<div class="gallery-grid">\n' + "\n".join(tiles) + "\n</div>"
+    else:
+        grid = (
+            '<div class="empty">No photos match. '
+            '<a href="/gallery">Clear the filters</a> 📸</div>'
+            if (selected_species or q)
+            else '<div class="empty">No photos yet — <a href="/observations/new">log a sighting with a photo</a> 📸</div>'
+        )
+    body = f"""
+<h2 class="section-title" style="margin-top:0">🖼️ Gallery</h2>
+<form class="search-bar" method="get" action="/gallery">
+  <select name="species" aria-label="Filter by species">
+    {"".join(opts)}
+  </select>
+  <input type="search" name="q" value="{_esc(q)}" placeholder="Search photos…">
+  <button class="btn btn-secondary" type="submit">Filter</button>
+  {f'<a href="/gallery" class="clear-link">Clear</a>' if (selected_species or q) else ""}
+</form>
+{grid}
+<div class="lightbox" id="lightbox" hidden>
+  <button class="lightbox-close" id="lightbox-close" aria-label="Close">✕</button>
+  <img id="lightbox-img" alt="">
+  <div class="lightbox-cap"><div id="lightbox-caption"></div><div id="lightbox-sub" class="sci"></div><a id="lightbox-view" href="/observations">View sighting →</a></div>
+</div>
+<script>
+(function () {{
+  var box = document.getElementById('lightbox');
+  var img = document.getElementById('lightbox-img');
+  var view = document.getElementById('lightbox-view');
+  document.querySelectorAll('.g-item').forEach(function (btn) {{
+    btn.addEventListener('click', function () {{
+      img.src = btn.dataset.full;
+      img.alt = btn.dataset.caption;
+      document.getElementById('lightbox-caption').textContent = btn.dataset.caption;
+      document.getElementById('lightbox-sub').textContent = btn.dataset.sub;
+      view.href = btn.dataset.view;
+      box.hidden = false;
+      document.body.style.overflow = 'hidden';
+    }});
+  }});
+  function close() {{ box.hidden = true; document.body.style.overflow = ''; }}
+  document.getElementById('lightbox-close').addEventListener('click', close);
+  box.addEventListener('click', function (e) {{ if (e.target === box) close(); }});
+  document.addEventListener('keydown', function (e) {{ if (e.key === 'Escape') close(); }});
+}})();
+</script>
+"""
+    return layout("Gallery", body)

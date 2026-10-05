@@ -16,13 +16,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import birdnet
 from app import ebird_import
 from app import inat
 from app import pages
+from app import range_map
 from app import vision_id
 from app.database import UPLOAD_DIR, get_session, init_db
 from app.models import Observation, Setting
@@ -733,3 +734,119 @@ def life_list_page_route(
 @app.get("/stats", response_class=HTMLResponse)
 def stats_page_route(session: Session = Depends(get_session)):
     return pages.stats_page(stats_data(session))
+
+
+# Range maps + photo gallery
+# ---------------------------------------------------------------------------
+
+
+def _species_own_sightings(
+    session: Session, names: set[str]
+) -> list[Observation]:
+    """Her sightings matching any of the given names (case-insensitive)."""
+    lowered = {n.strip().lower() for n in names if n and n.strip()}
+    if not lowered:
+        return []
+    return (
+        session.query(Observation)
+        .filter(
+            or_(
+                func.lower(Observation.scientific_name).in_(lowered),
+                func.lower(Observation.species_name).in_(lowered),
+            )
+        )
+        .order_by(Observation.observed_at.desc().nullslast(), Observation.id.desc())
+        .all()
+    )
+
+
+def _taxon_info(scientific_name: str) -> dict | None:
+    """Best-effort taxon card from iNaturalist; None when unreachable/unknown."""
+    try:
+        matches = inat.search_taxa(scientific_name, per_page=5)
+    except Exception:
+        return None
+    if not matches:
+        return None
+    lowered = scientific_name.strip().lower()
+    for m in matches:
+        if (m.get("scientific_name") or "").lower() == lowered:
+            return m
+    return matches[0]
+
+
+@app.get("/api/species/range")
+def species_range_api(
+    scientific_name: str = Query(..., min_length=1),
+    session: Session = Depends(get_session),
+):
+    """JSON range data for a species (cached 7 days). Never 500s."""
+    return range_map.get_range(session, scientific_name)
+
+
+@app.get("/species/{scientific_name:path}", response_class=HTMLResponse)
+def species_page_route(
+    scientific_name: str, session: Session = Depends(get_session)
+):
+    name = (scientific_name or "").strip()
+    taxon = _taxon_info(name) if name else None
+    names = {name}
+    if taxon and taxon.get("common_name"):
+        names.add(taxon["common_name"])
+    if taxon and taxon.get("scientific_name"):
+        names.add(taxon["scientific_name"])
+    rng = range_map.get_range(session, name)
+    own = _species_own_sightings(session, names)
+    # Her own mappable sightings: distinct brown markers on the map.
+    own_points = [
+        {
+            "lat": o.latitude,
+            "lng": o.longitude,
+            "label": (o.location_name or "Your sighting"),
+        }
+        for o in own
+        if o.latitude is not None and o.longitude is not None
+    ]
+    return pages.species_page(
+        taxon=taxon,
+        range_data=rng,
+        own_points=own_points,
+        sightings=[_obs_to_dict(o) for o in own],
+        display_name=name or "Unknown species",
+    )
+
+
+def _gallery_species_options(session: Session) -> list[str]:
+    rows = (
+        session.query(Observation.species_name)
+        .filter(Observation.photo_path.isnot(None))
+        .filter(Observation.species_name.isnot(None))
+        .distinct()
+        .all()
+    )
+    return sorted({r[0] for r in rows if r[0]}, key=str.lower)
+
+
+@app.get("/gallery", response_class=HTMLResponse)
+def gallery_page_route(
+    species: str | None = Query(None),
+    q: str | None = Query(None),
+    session: Session = Depends(get_session),
+):
+    query = (
+        session.query(Observation)
+        .filter(Observation.photo_path.isnot(None))
+        .order_by(Observation.observed_at.desc().nullslast(), Observation.id.desc())
+    )
+    query = _apply_observation_search(query, q, False)
+    if species and species.strip():
+        query = query.filter(
+            func.lower(Observation.species_name) == species.strip().lower()
+        )
+    items = [_obs_to_dict(o) for o in query.all()]
+    return pages.gallery_page(
+        items,
+        species_options=_gallery_species_options(session),
+        selected_species=species or "",
+        q=q or "",
+    )

@@ -42,3 +42,13 @@ class Setting(Base):
 
     key: Mapped[str] = mapped_column(String(255), primary_key=True)
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class RangeCache(Base):
+    """Cached iNaturalist range-map points per taxon (7-day TTL)."""
+
+    __tablename__ = "range_cache"
+
+    taxon_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    points_json: Mapped[str | None] = mapped_column(Text, nullable=True)

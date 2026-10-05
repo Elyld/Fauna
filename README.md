@@ -52,14 +52,14 @@ Paste that into a new Dockge stack (or just use this repo's `docker-compose.yml`
 - [x] Pink-themed web UI: home (`/`), observations (`/observations`), log-a-sighting form with iNaturalist autocomplete (`/observations/new`)
 - [x] Photo ID (`/identify`): upload a photo → vision-model suggestions → confirm → prefilled sighting form (needs an OpenRouter key in Settings, see below)
 - [x] Bird sound ID (`/identify-audio`): record/upload a clip → BirdNET analysis → suggestions → prefilled sighting form
-- [ ] Range maps per species (iNaturalist/GBIF occurrence data)
+- [x] Range maps per species (`/species/<name>`): research-grade iNaturalist observation points on a Leaflet map, cached 7 days, with your own sightings pinned — click any species on the life list
 - [x] Life list (`/life-list`): one row per species ever logged, sortable by most recent / most seen / A–Z
 - [x] Stats (`/stats`): sightings-per-month bars + yearly activity heatmap
 - [x] Observation search & "needs ID" filter on `/observations` (+ `?q=` / `?needs_id=` on the JSON API)
 - [x] Edit sightings (`/observations/{id}/edit`, `PUT /api/observations/{id}`)
 - [x] CSV export (`GET /api/observations/export.csv`, "Export CSV" button)
 - [x] eBird CSV import (`/import`): upload a "Download My Data" export → preview → confirm, with dedup
-- [ ] Photo gallery
+- [x] Photo gallery (`/gallery`): all sighting photos in a grid, filterable by species + text search, with a lightbox view
 - [x] Mobile-friendly quick-log: responsive pages, bottom tab bar, camera-first photo capture, installable PWA
 
 ## Bringing your eBird history
@@ -94,6 +94,21 @@ support (service worker + cached sightings) is future work — the app needs a
 connection for species search, photo ID, and sound ID.
 
 Demo data + screenshots: with the app running, `scripts/seed_demo.py` seeds five charming observations (real iNaturalist names and photos) via the API, and `scripts/screenshots.py` captures `docs/screenshots/` with Chrome for Testing.
+
+## Range maps
+
+Click any species on the 🦌 Life list to open its page: a card with the
+species' photo and facts, a map of where it's normally seen (research-grade
+iNaturalist observations, plotted with Leaflet), and your own sightings of
+that species pinned on the same map. Range data is cached for 7 days so
+repeat visits don't hammer iNaturalist's API, and the page renders fine even
+if the map library can't load.
+
+## Photo gallery
+
+🖼️ Gallery shows every sighting photo in a grid, most recent first — filter
+by species or search, click any photo for a full-size lightbox with the
+species, date, and location. Sightings without photos simply don't appear.
 
 ## Species data
 
