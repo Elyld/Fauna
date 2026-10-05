@@ -84,6 +84,7 @@ def layout(title: str, body: str) -> str:
   <a href="/map">🗺️<span>Map</span></a>
   <a href="/identify">🔍<span>Identify</span></a>
   <a href="/identify-audio">🎵<span>Sound</span></a>
+  <a href="/settings">⚙️<span>Settings</span></a>
 </nav>
 <footer>{APP_NAME} · a wildlife observation journal</footer>
 <script src="/static/js/outbox.js"></script>
@@ -981,7 +982,7 @@ def settings_page(current: dict | None = None) -> str:
     list.forEach(function (m) {{
       var opt = document.createElement('option');
       opt.value = m.id;
-      opt.textContent = m.free ? m.name + ' (free)' : m.name;
+      opt.textContent = m.free && m.name.toLowerCase().indexOf('(free)') === -1 ? m.name + ' (free)' : m.name;
       sel.appendChild(opt);
     }});
     var custom = document.createElement('option');
@@ -1305,7 +1306,7 @@ def _observation_form(prefill: dict, mode: str) -> str:
       files.forEach(function (f) {{ fd.append('files', f, f.name); }});
       return fetch('/api/observations/' + obsId + '/photos', {{ method: 'POST', body: fd }})
         .then(function (r) {{
-          if (!r.ok) throw new Error('Photos could not be saved.');
+          if (!r.ok) throw new Error('Photos could not be saved — your sighting was saved; open it and use Edit to add the photos again.');
         }});
     }}
     // Offline: queue the sighting (fields + photos) in the outbox; it syncs

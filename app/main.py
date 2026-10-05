@@ -381,12 +381,14 @@ def _build_backup_readme(stamp: str) -> str:
         f"Fauna backup — created {stamp}\n"
         "\n"
         "What's inside this zip:\n"
-        "  fauna.db          The full Fauna database (every sighting, setting,\n"
-        "                  and life-list entry). Open it with any SQLite\n"
-        "                  browser if you ever need to.\n"
+        "  fauna.db          The full Fauna database — every sighting, every\n"
+        "                  photo record, your wishlist, and all settings.\n"
+        "                  Open it with any SQLite browser if you ever\n"
+        "                  need to.\n"
         "  photos/           Every sighting photo, as uploaded.\n"
         "  observations.json Every sighting in plain, human-readable JSON —\n"
         "                  readable even if fauna.db won't open.\n"
+        "  wishlist.json   Your wishlist in the same plain format.\n"
         "  settings.json     Your saved settings (photo-ID model etc.). API\n"
         "                  keys are NOT included — you'll need to paste them\n"
         "                  again after a restore.\n"
@@ -395,8 +397,9 @@ def _build_backup_readme(stamp: str) -> str:
         "  1. Stop the Fauna app (stop the Docker container).\n"
         "  2. Replace fauna.db with the one from this zip, and replace the\n"
         "     contents of the photos folder with the photos/ folder from\n"
-        "     this zip. (Keep a copy of the current files first, just in\n"
-        "     case.)\n"
+        "     this zip. (The database already knows about your wishlist\n"
+        "     and all your sightings' photos — keep a copy of the current\n"
+        "     files first, just in case.)\n"
         "  3. Start the app again. Everything is back.\n"
         "\n"
         "Keep this zip somewhere safe — it's everything.\n"
@@ -443,6 +446,15 @@ def download_backup():
                 _obs_to_dict(o)
                 for o in session.query(Observation).order_by(Observation.id.asc()).all()
             ]
+            wishlist = [
+                {
+                    "scientific_name": w.scientific_name,
+                    "common_name": w.common_name,
+                    "notes": w.notes,
+                    "added": w.created_at.isoformat() if w.created_at else None,
+                }
+                for w in session.query(Wishlist).order_by(Wishlist.id.asc()).all()
+            ]
             settings: dict[str, str | bool | None] = {}
             for key in sorted(PUBLIC_SETTINGS):
                 settings[key] = get_setting(session, key)
@@ -464,12 +476,24 @@ def download_backup():
         (tmp / "settings.json").write_text(
             json.dumps(settings, indent=2), encoding="utf-8"
         )
+        (tmp / "wishlist.json").write_text(
+            json.dumps(
+                {
+                    "app": APP_NAME,
+                    "exported_at": datetime.now().isoformat(timespec="seconds"),
+                    "wishlist": wishlist,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         (tmp / "README.txt").write_text(_build_backup_readme(stamp), encoding="utf-8")
 
         zip_path = tmp / zip_name
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.write(tmp / "fauna.db", "fauna.db")
             zf.write(tmp / "observations.json", "observations.json")
+            zf.write(tmp / "wishlist.json", "wishlist.json")
             zf.write(tmp / "settings.json", "settings.json")
             zf.write(tmp / "README.txt", "README.txt")
             for photo in photo_files:

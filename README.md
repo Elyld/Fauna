@@ -168,6 +168,10 @@ derived when the page loads, so there's nothing to keep in sync.
   <tr>
     <td colspan="2"><img src="docs/screenshots/settings.png" width="600"><br><em>⚙️ Settings — vision model dropdown with free-models filter</em></td>
   </tr>
+  <tr>
+    <td><img src="docs/screenshots/mobile-home.png" width="200"><br><em>🏠 Fresh start on mobile — friendly first-run</em></td>
+    <td><img src="docs/screenshots/mobile-settings.png" width="200"><br><em>⚙️ Settings on mobile, with its own tab</em></td>
+  </tr>
 </table>
 
 More in `docs/screenshots/` (home, observations, life list, stats, identify,
