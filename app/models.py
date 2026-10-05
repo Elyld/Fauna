@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -33,6 +33,54 @@ class Observation(Base):
         String(255), nullable=True
     )  # e.g. "ebird:S12345678" — dedup key for imports
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    photos: Mapped[list["ObservationPhoto"]] = relationship(
+        "ObservationPhoto",
+        back_populates="observation",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="ObservationPhoto.id",
+    )
+
+
+class ObservationPhoto(Base):
+    """One photo attached to a sighting. A sighting can have many;
+    the cover (primary) photo is still tracked on observations.photo_path."""
+
+    __tablename__ = "observation_photos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    observation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("observations.id", ondelete="CASCADE"), nullable=False
+    )
+    photo_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    observation: Mapped["Observation"] = relationship(
+        "Observation", back_populates="photos"
+    )
+
+
+class Wishlist(Base):
+    """Species she'd love to find — the "hope to see" list."""
+
+    __tablename__ = "wishlist"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scientific_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    common_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    taxon_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class NearbyCache(Base):
+    """Cached 'around you right now' species lists (7-day TTL, keyed by
+    rounded home location + month — what's nearby changes seasonally)."""
+
+    __tablename__ = "nearby_cache"
+
+    cache_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Setting(Base):

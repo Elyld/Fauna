@@ -42,6 +42,28 @@ def init_db() -> None:
             conn.exec_driver_sql("PRAGMA journal_mode=WAL")
             conn.exec_driver_sql("PRAGMA foreign_keys=ON")
     _apply_column_migrations()
+    _backfill_photo_rows()
+
+
+def _backfill_photo_rows() -> None:
+    """One-time data backfill: observations that predate the multi-photo
+    table keep their cover on observations.photo_path — give each one a
+    matching row in observation_photos so galleries/lightboxes see them.
+    Idempotent: only inserts where no row exists for that photo."""
+    with engine.connect() as conn:
+        conn.exec_driver_sql(
+            """
+            INSERT INTO observation_photos (observation_id, photo_path, created_at)
+            SELECT o.id, o.photo_path, o.created_at
+            FROM observations o
+            WHERE o.photo_path IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM observation_photos p
+                WHERE p.observation_id = o.id AND p.photo_path = o.photo_path
+              )
+            """
+        )
+        conn.commit()
 
 
 def _apply_column_migrations() -> None:

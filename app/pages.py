@@ -27,6 +27,16 @@ def _fmt_date(iso: str | None) -> str:
         return iso
 
 
+def _json_script(data) -> str:
+    """JSON safe to embed in a <script type="application/json"> block.
+
+    Script contents are raw text — HTML entities are NOT decoded — so _esc
+    would corrupt any string values. Escaping "<" instead also neutralizes
+    a "</script>" breakout.
+    """
+    return json.dumps(data).replace("<", "\\u003c")
+
+
 def layout(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html lang="en">
@@ -51,6 +61,9 @@ def layout(title: str, body: str) -> str:
     <a href="/">Home</a>
     <a href="/observations">Observations</a>
     <a href="/life-list">🦌 Life list</a>
+    <a href="/map">🗺️ Map</a>
+    <a href="/nearby">📍 Nearby</a>
+    <a href="/wishlist">⭐ Wishlist</a>
     <a href="/stats">📊 Stats</a>
     <a href="/identify">🔍 Identify</a>
     <a href="/identify-audio">🎵 Sound ID</a>
@@ -60,16 +73,102 @@ def layout(title: str, body: str) -> str:
     <a href="/settings">⚙️ Settings</a>
   </nav>
 </header>
+<div id="offline-bar" class="offline-bar" hidden>📶 You're offline — you can still log sightings; they'll sync when you're back. Species search and ID features need a connection.</div>
+<div id="outbox-banner" class="outbox-banner" hidden>📶 <span id="outbox-count">0</span> sighting(s) waiting to sync <button id="outbox-sync" class="btn btn-secondary" type="button">Sync now</button> <span id="outbox-status"></span></div>
 <main class="wrap">
 {body}
 </main>
 <nav class="tabbar" aria-label="Primary">
   <a href="/">🏠<span>Home</span></a>
   <a href="/observations">🐾<span>Sightings</span></a>
+  <a href="/map">🗺️<span>Map</span></a>
   <a href="/identify">🔍<span>Identify</span></a>
   <a href="/identify-audio">🎵<span>Sound</span></a>
 </nav>
 <footer>{APP_NAME} · a wildlife observation journal</footer>
+<script src="/static/js/outbox.js"></script>
+<script>
+(function () {{
+  if ('serviceWorker' in navigator) {{
+    navigator.serviceWorker.register('/sw.js').catch(function () {{}});
+  }}
+  var bar = document.getElementById('offline-bar');
+  function updateOffline() {{
+    bar.hidden = navigator.onLine;
+  }}
+  window.addEventListener('online', updateOffline);
+  window.addEventListener('offline', updateOffline);
+  updateOffline();
+
+  // Outbox: queued sightings waiting for a connection.
+  var banner = document.getElementById('outbox-banner');
+  var countEl = document.getElementById('outbox-count');
+  var statusEl = document.getElementById('outbox-status');
+  var syncBtn = document.getElementById('outbox-sync');
+  var dbPromise = null;
+  function db() {{
+    if (!dbPromise) dbPromise = window.FaunaOutbox.openDb().catch(function () {{ return null; }});
+    return dbPromise;
+  }}
+  function refreshBanner() {{
+    db().then(function (dbi) {{
+      if (!dbi) return;
+      return window.FaunaOutbox.countPending(dbi).then(function (n) {{
+        banner.hidden = !n;
+        countEl.textContent = n;
+      }});
+    }});
+  }}
+  function http() {{
+    return {{
+      postJson: function (url, obj) {{
+        return fetch(url, {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify(obj) }})
+          .then(function (r) {{ return r.json().then(function (b) {{ return {{ ok: r.ok, body: b }}; }}); }});
+      }},
+      postPhotos: function (obsId, photos) {{
+        var fd = new FormData();
+        photos.forEach(function (p) {{
+          var parts = window.FaunaOutbox.dataUrlToParts(p.dataUrl);
+          fd.append('files', window.FaunaOutbox.partsToBlob(parts), p.name);
+        }});
+        return fetch('/api/observations/' + obsId + '/photos', {{ method: 'POST', body: fd }})
+          .then(function (r) {{ return r.json().then(function (b) {{ return {{ ok: r.ok, body: b }}; }}); }});
+      }}
+    }};
+  }}
+  function syncNow() {{
+    syncBtn.disabled = true;
+    statusEl.textContent = 'Syncing…';
+    db().then(function (dbi) {{
+      if (!dbi) throw new Error('no outbox');
+      return window.FaunaOutbox.syncAll(dbi, http(), function (done, total) {{
+        statusEl.textContent = 'Synced ' + done + ' of ' + total + '…';
+      }});
+    }}).then(function (res) {{
+      statusEl.textContent = res.failed
+        ? '✓ ' + res.synced + ' synced, ' + res.failed + ' still waiting.'
+        : '✓ All synced!';
+      refreshBanner();
+    }}).catch(function () {{
+      statusEl.textContent = "Couldn't sync — still offline?";
+    }}).finally(function () {{
+      syncBtn.disabled = false;
+      setTimeout(function () {{ statusEl.textContent = ''; }}, 4000);
+    }});
+  }}
+  syncBtn.addEventListener('click', syncNow);
+  window.addEventListener('online', function () {{
+    db().then(function (dbi) {{
+      if (!dbi) return;
+      return window.FaunaOutbox.countPending(dbi);
+    }}).then(function (n) {{
+      if (n) syncNow(); else refreshBanner();
+    }});
+  }});
+  window.__faunaRefreshOutbox = refreshBanner;
+  refreshBanner();
+}})();
+</script>
 </body>
 </html>"""
 
@@ -258,6 +357,16 @@ def stats_page(data: dict) -> str:
 def identify_page() -> str:
     body = """
 <h2 class="section-title" style="margin-top:0">🔍 What did I see?</h2>
+<div id="id-offline-note" class="notice" hidden>📶 You're offline — photo ID needs a connection, but you can still <a href="/observations/new">log the sighting</a> and ID it later.</div>
+<script>
+(function () {
+  var n = document.getElementById('id-offline-note');
+  function upd() { n.hidden = navigator.onLine; }
+  window.addEventListener('online', upd);
+  window.addEventListener('offline', upd);
+  upd();
+})();
+</script>
 <div class="steps">
   <div class="step active" id="step-1">1 · Photo</div>
   <div class="step" id="step-2">2 · Confirm</div>
@@ -441,6 +550,16 @@ def identify_page() -> str:
 def identify_audio_page() -> str:
     body = """
 <h2 class="section-title" style="margin-top:0">🎵 What did I hear?</h2>
+<div id="snd-offline-note" class="notice" hidden>📶 You're offline — sound ID needs a connection, but you can still <a href="/observations/new">log the sighting</a> and ID it later.</div>
+<script>
+(function () {
+  var n = document.getElementById('snd-offline-note');
+  function upd() { n.hidden = navigator.onLine; }
+  window.addEventListener('online', upd);
+  window.addEventListener('offline', upd);
+  upd();
+})();
+</script>
 <div class="steps">
   <div class="step active" id="astep-1">1 · Record</div>
   <div class="step" id="astep-2">2 · Confirm</div>
@@ -665,6 +784,9 @@ def settings_page(current: dict | None = None) -> str:
         if key_configured
         else '<div class="hint">No key saved yet — photo ID will stay in manual mode.</div>'
     )
+    home_lat = _esc(current.get("home_latitude") or "")
+    home_lng = _esc(current.get("home_longitude") or "")
+    home_name = _esc(current.get("home_name") or "")
     body = f"""
 <h2 class="section-title" style="margin-top:0">⚙️ Settings</h2>
 <div class="form-card">
@@ -693,6 +815,34 @@ def settings_page(current: dict | None = None) -> str:
     </div>
   </form>
   <div id="settings-msg" style="margin-top:0.75rem"></div>
+</div>
+<div class="form-card">
+  <h3 style="margin-top:0">📍 Home location</h3>
+  <p class="hint" style="margin-top:0">
+    Used for <b>📍 Nearby</b> — "what's being seen around you right now".
+    It's only ever used to look up nearby species; nothing leaves this server.
+  </p>
+  <form id="home-form">
+    <div class="field">
+      <label for="home-name">Place name</label>
+      <input type="text" id="home-name" value="{home_name}" placeholder="Home">
+    </div>
+    <div class="form-row">
+      <div class="field">
+        <label for="home-lat">Latitude</label>
+        <input type="text" id="home-lat" inputmode="decimal" value="{home_lat}" placeholder="39.05">
+      </div>
+      <div class="field">
+        <label for="home-lng">Longitude</label>
+        <input type="text" id="home-lng" inputmode="decimal" value="{home_lng}" placeholder="-95.68">
+      </div>
+    </div>
+    <div class="cta-row" style="justify-content:flex-start">
+      <button class="btn" type="submit">Save location</button>
+      <button class="btn btn-secondary" type="button" id="use-my-location">📍 Use my location</button>
+    </div>
+  </form>
+  <div id="home-msg" style="margin-top:0.75rem"></div>
 </div>
 <div class="form-card">
   <h3 style="margin-top:0">💾 Backup</h3>
@@ -734,12 +884,62 @@ def settings_page(current: dict | None = None) -> str:
         msg.innerHTML = '<div class="notice">✓ Backup downloaded.</div>';
       }})
       .catch(function () {{
-        msg.innerHTML = '<div class="notice">Couldn't build the backup — please try again.</div>';
+        msg.innerHTML = '<div class="notice">Couldn’t build the backup — please try again.</div>';
       }})
       .finally(function () {{
         btn.disabled = false;
         btn.textContent = '⬇️ Download backup';
       }});
+  }});
+}})();
+</script>
+<script>
+(function () {{
+  var form = document.getElementById('home-form');
+  var msg = document.getElementById('home-msg');
+  form.addEventListener('submit', function (e) {{
+    e.preventDefault();
+    var payload = {{
+      home_name: document.getElementById('home-name').value,
+      home_latitude: document.getElementById('home-lat').value,
+      home_longitude: document.getElementById('home-lng').value
+    }};
+    fetch('/api/settings', {{
+      method: 'PUT',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify(payload)
+    }})
+      .then(function (r) {{
+        if (!r.ok) throw new Error('Those coordinates don\u2019t look right.');
+        return r.json();
+      }})
+      .then(function () {{
+        msg.innerHTML = '<div class="notice">✓ Home location saved — <a href="/nearby">see what\u2019s nearby</a>.</div>';
+      }})
+      .catch(function (ex) {{
+        msg.innerHTML = '<div class="notice">' + ex.message + '</div>';
+      }});
+  }});
+  document.getElementById('use-my-location').addEventListener('click', function () {{
+    if (!('geolocation' in navigator)) {{
+      msg.innerHTML = '<div class="notice">This browser can\u2019t share its location — type it in instead.</div>';
+      return;
+    }}
+    msg.innerHTML = '<div class="notice">Finding you…</div>';
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {{
+        document.getElementById('home-lat').value = pos.coords.latitude.toFixed(5);
+        document.getElementById('home-lng').value = pos.coords.longitude.toFixed(5);
+        if (!document.getElementById('home-name').value) {{
+          document.getElementById('home-name').value = 'Home';
+        }}
+        msg.innerHTML = '<div class="notice">✓ Got it — hit <b>Save location</b>.</div>';
+      }},
+      function () {{
+        msg.innerHTML = '<div class="notice">Couldn\u2019t get your location — type it in instead.</div>';
+      }},
+      {{ enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }}
+    );
   }});
 }})();
 </script>
@@ -765,7 +965,7 @@ def settings_page(current: dict | None = None) -> str:
         document.getElementById('or-key').value = '';
       }})
       .catch(function () {{
-        msg.innerHTML = '<div class="notice">Couldn't save — please try again.</div>';
+        msg.innerHTML = '<div class="notice">Couldn’t save — please try again.</div>';
       }});
   }});
 }})();
@@ -795,7 +995,7 @@ def _observation_form(prefill: dict, mode: str) -> str:
     observed_prefill = _esc(prefill.get("observed_at") or "")
     count_prefill = prefill.get("count") or 1
     pending = prefill.get("pending_photo")
-    existing_photo = prefill.get("existing_photo")
+    existing_photos = prefill.get("existing_photos") or []
     needs_id_checked = "checked" if prefill.get("needs_id") else ""
     title = "Edit sighting" if is_edit else "Log a sighting"
     button = "Save changes" if is_edit else "Save sighting"
@@ -803,28 +1003,39 @@ def _observation_form(prefill: dict, mode: str) -> str:
     camera_block = """
     <div class="field">
       <label class="photo-btn" for="photo">📸<span>Take a photo</span></label>
-      <input type="file" id="photo" name="photo" accept="image/*" capture="environment" style="display:none">
-      <img id="photo-preview" class="photo-preview" alt="Photo preview" style="display:none">
-      <div class="hint">Camera opens right away — or pick one from your gallery.</div>
+      <input type="file" id="photo" name="photo" accept="image/*" capture="environment" multiple style="display:none">
+      <div class="photo-strip" id="photo-previews"></div>
+      <div class="hint">Camera opens right away — or pick several from your gallery.</div>
     </div>"""
-    if is_edit and existing_photo:
+    if is_edit:
+        chips = []
+        for p in existing_photos:
+            chips.append(
+                f'<div class="photo-chip" data-photo-chip="{p["id"]}">'
+                f'<img src="{_esc(p["photo_url"])}" alt="Sighting photo">'
+                f'<button type="button" class="photo-del" data-del-photo="{p["id"]}" aria-label="Remove this photo">✕</button>'
+                "</div>"
+            )
         photo_block = f"""
     <div class="field">
-      <label>Photo</label>
-      <img src="{_esc(existing_photo)}" class="photo-preview" alt="Sighting photo">
-      <label class="photo-btn" for="photo" style="margin-top:0.6rem">📸<span>Replace photo</span></label>
-      <input type="file" id="photo" name="photo" accept="image/*" capture="environment" style="display:none">
-      <img id="photo-preview" class="photo-preview" alt="New photo preview" style="display:none">
+      <label>Photos</label>
+      <div class="photo-strip" id="existing-photos">
+        {''.join(chips) if chips else '<span class="hint">No photos yet.</span>'}
+      </div>
+      <label class="photo-btn" for="photo" style="margin-top:0.6rem">📸<span>Add photos</span></label>
+      <input type="file" id="photo" name="photo" accept="image/*" multiple style="display:none">
+      <div class="photo-strip" id="photo-previews"></div>
     </div>"""
-    elif is_edit:
-        photo_block = camera_block
     elif pending:
         photo_block = f"""
     <div class="field">
       <label>Photo</label>
       <img src="{_esc(pending['url'])}" class="photo-preview" alt="Sighting photo">
       <input type="hidden" id="pending-photo" value="{_esc(pending['path'])}">
-      <div class="hint">From your identification — it'll be saved with this sighting.</div>
+      <div class="hint">From your identification — it'll be saved with this sighting. You can add more below.</div>
+      <label class="photo-btn" for="photo" style="margin-top:0.6rem">📸<span>Add more photos</span></label>
+      <input type="file" id="photo" name="photo" accept="image/*" capture="environment" multiple style="display:none">
+      <div class="photo-strip" id="photo-previews"></div>
     </div>"""
     else:
         photo_block = camera_block
@@ -940,14 +1151,49 @@ def _observation_form(prefill: dict, mode: str) -> str:
     if (!list.contains(e.target) && e.target !== input) close();
   }});
 
-  // Photo preview for the camera button.
+  // Photo previews for the camera button (all chosen files).
   var photoInput = document.getElementById('photo');
-  var photoPreview = document.getElementById('photo-preview');
-  if (photoInput && photoPreview) {{
+  var previews = document.getElementById('photo-previews');
+  if (photoInput && previews) {{
     photoInput.addEventListener('change', function () {{
-      if (!photoInput.files.length) return;
-      photoPreview.src = URL.createObjectURL(photoInput.files[0]);
-      photoPreview.style.display = '';
+      previews.innerHTML = '';
+      Array.prototype.forEach.call(photoInput.files, function (f) {{
+        var img = document.createElement('img');
+        img.className = 'photo-thumb';
+        img.alt = 'Photo preview';
+        img.src = URL.createObjectURL(f);
+        previews.appendChild(img);
+      }});
+    }});
+  }}
+
+  // Edit mode: remove an existing photo without leaving the page.
+  var existingStrip = document.getElementById('existing-photos');
+  if (existingStrip) {{
+    existingStrip.addEventListener('click', function (e) {{
+      var btn = e.target.closest ? e.target.closest('[data-del-photo]') : null;
+      if (!btn) return;
+      var pid = btn.getAttribute('data-del-photo');
+      btn.disabled = true;
+      fetch('/api/observations/{obs_id}/photos/' + pid, {{ method: 'DELETE' }})
+        .then(function (r) {{
+          if (!r.ok) throw new Error('remove failed');
+          var chip = existingStrip.querySelector('[data-photo-chip="' + pid + '"]');
+          if (chip) chip.remove();
+          if (!existingStrip.querySelector('[data-photo-chip]')) {{
+            existingStrip.innerHTML = '<span class="hint">No photos yet.</span>';
+          }}
+        }})
+        .catch(function () {{ btn.disabled = false; }});
+    }});
+  }}
+
+  function readFileAsDataUrl(file) {{
+    return new Promise(function (resolve, reject) {{
+      var r = new FileReader();
+      r.onload = function () {{ resolve({{ name: file.name, dataUrl: r.result }}); }};
+      r.onerror = function () {{ reject(r.error); }};
+      r.readAsDataURL(file);
     }});
   }}
 
@@ -967,19 +1213,47 @@ def _observation_form(prefill: dict, mode: str) -> str:
       needs_id: document.getElementById('needs-id').checked,
       photo_path: pendingPhotoEl ? pendingPhotoEl.value : null
     }};
+    var files = (photoInput && photoInput.files) ? Array.prototype.slice.call(photoInput.files) : [];
     {save_js}
-    // A freshly picked file uploads the classic way after the record saves;
-    // a pending photo from Identify rides along in the payload instead.
-    var file = photoInput && photoInput.files[0];
+    function uploadAll(obsId) {{
+      if (!files.length) return Promise.resolve();
+      var fd = new FormData();
+      files.forEach(function (f) {{ fd.append('files', f, f.name); }});
+      return fetch('/api/observations/' + obsId + '/photos', {{ method: 'POST', body: fd }})
+        .then(function (r) {{
+          if (!r.ok) throw new Error('Photos could not be saved.');
+        }});
+    }}
+    // Offline: queue the sighting (fields + photos) in the outbox; it syncs
+    // through the normal API when the connection comes back.
+    if (!navigator.onLine && window.FaunaOutbox) {{
+      Promise.all(files.map(readFileAsDataUrl)).then(function (photos) {{
+        return window.FaunaOutbox.openDb().then(function (dbi) {{
+          return window.FaunaOutbox.savePending(dbi, {{ payload: payload, photos: photos }});
+        }});
+      }}).then(function () {{
+        if (window.__faunaRefreshOutbox) window.__faunaRefreshOutbox();
+        err.textContent = '';
+        err.classList.remove('show');
+        var done = document.createElement('div');
+        done.className = 'notice';
+        done.textContent = '📶 Saved — it will sync when you\u2019re back online.';
+        document.getElementById('obs-form').prepend(done);
+        setTimeout(function () {{ window.location = '/observations'; }}, 1500);
+      }}).catch(function () {{
+        err.textContent = 'Could not save offline — please try again.';
+        err.classList.add('show');
+      }});
+      return;
+    }}
+    // Online: save the record, then upload any picked photos.
+    // A pending photo from Identify rides along in the payload instead.
     saveObservation()
       .then(function (res) {{
         if (!res.ok) throw new Error('Could not save the sighting.');
-        if (!file) {{ window.location = '/observations'; return; }}
-        var fd = new FormData();
-        fd.append('file', file);
-        return fetch('/api/observations/' + res.body.id + '/photo', {{ method: 'POST', body: fd }})
-          .then(function () {{ window.location = '/observations'; }});
+        return uploadAll(res.body.id);
       }})
+      .then(function () {{ window.location = '/observations'; }})
       .catch(function (ex) {{
         err.textContent = ex.message || 'Something went wrong.';
         err.classList.add('show');
@@ -1007,7 +1281,7 @@ def edit_observation_page(obs: dict) -> str:
             "location_name": obs.get("location_name") or "",
             "notes": obs.get("notes") or "",
             "needs_id": obs.get("needs_id"),
-            "existing_photo": obs.get("photo_url"),
+            "existing_photos": obs.get("photos") or [],
         },
         mode="edit",
     )
@@ -1131,8 +1405,8 @@ def species_page(
             + "."
         )
 
-    points_json = _esc(json.dumps([[p[0], p[1]] for p in points]))
-    own_json = _esc(json.dumps(own_points))
+    points_json = _json_script([[p[0], p[1]] for p in points])
+    own_json = _json_script(own_points)
 
     if sightings:
         mine = '<div class="cards">\n' + "\n".join(
@@ -1229,12 +1503,17 @@ def gallery_page(
                     if x and x != "—"
                 )
             )
+            photos = [p.get("photo_url") for p in (o.get("photos") or []) if p.get("photo_url")]
+            if not photos and o.get("photo_url"):
+                photos = [o["photo_url"]]
+            n_photos = f" · {len(photos)} photos" if len(photos) > 1 else ""
             view_href = "/observations?" + urlencode(
                 {"q": o.get("species_name") or ""}
             ) if o.get("species_name") else "/observations"
             tiles.append(f"""
 <button class="g-item" data-full="{_esc(o.get("photo_url"))}"
-        data-caption="{caption}" data-sub="{sub}" data-view="{_esc(view_href)}">
+        data-caption="{caption}" data-sub="{sub}{_esc(n_photos)}" data-view="{_esc(view_href)}"
+        data-photos="{_esc(json.dumps(photos))}">
   <img src="{_esc(o.get("photo_url"))}" alt="{caption}" loading="lazy">
   <span class="g-cap">{caption}</span>
 </button>""")
@@ -1259,30 +1538,367 @@ def gallery_page(
 {grid}
 <div class="lightbox" id="lightbox" hidden>
   <button class="lightbox-close" id="lightbox-close" aria-label="Close">✕</button>
+  <button class="lightbox-nav lightbox-prev" id="lightbox-prev" aria-label="Previous photo">‹</button>
   <img id="lightbox-img" alt="">
-  <div class="lightbox-cap"><div id="lightbox-caption"></div><div id="lightbox-sub" class="sci"></div><a id="lightbox-view" href="/observations">View sighting →</a></div>
+  <button class="lightbox-nav lightbox-next" id="lightbox-next" aria-label="Next photo">›</button>
+  <div class="lightbox-cap"><div id="lightbox-caption"></div><div id="lightbox-sub" class="sci"></div><div id="lightbox-count" class="sci"></div><a id="lightbox-view" href="/observations">View sighting →</a></div>
 </div>
 <script>
 (function () {{
   var box = document.getElementById('lightbox');
   var img = document.getElementById('lightbox-img');
   var view = document.getElementById('lightbox-view');
+  var countEl = document.getElementById('lightbox-count');
+  var photos = [];
+  var idx = 0;
+  function show(i) {{
+    if (!photos.length) return;
+    idx = (i + photos.length) % photos.length;
+    img.src = photos[idx];
+    countEl.textContent = photos.length > 1 ? (idx + 1) + ' of ' + photos.length : '';
+    var showNav = photos.length > 1;
+    document.getElementById('lightbox-prev').style.display = showNav ? '' : 'none';
+    document.getElementById('lightbox-next').style.display = showNav ? '' : 'none';
+  }}
   document.querySelectorAll('.g-item').forEach(function (btn) {{
     btn.addEventListener('click', function () {{
-      img.src = btn.dataset.full;
+      try {{
+        photos = JSON.parse(btn.dataset.photos || '[]');
+      }} catch (e) {{ photos = []; }}
+      if (!photos.length && btn.dataset.full) photos = [btn.dataset.full];
       img.alt = btn.dataset.caption;
       document.getElementById('lightbox-caption').textContent = btn.dataset.caption;
       document.getElementById('lightbox-sub').textContent = btn.dataset.sub;
       view.href = btn.dataset.view;
       box.hidden = false;
       document.body.style.overflow = 'hidden';
+      show(0);
     }});
   }});
+  document.getElementById('lightbox-prev').addEventListener('click', function (e) {{ e.stopPropagation(); show(idx - 1); }});
+  document.getElementById('lightbox-next').addEventListener('click', function (e) {{ e.stopPropagation(); show(idx + 1); }});
   function close() {{ box.hidden = true; document.body.style.overflow = ''; }}
   document.getElementById('lightbox-close').addEventListener('click', close);
   box.addEventListener('click', function (e) {{ if (e.target === box) close(); }});
-  document.addEventListener('keydown', function (e) {{ if (e.key === 'Escape') close(); }});
+  document.addEventListener('keydown', function (e) {{
+    if (box.hidden) return;
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowLeft') show(idx - 1);
+    if (e.key === 'ArrowRight') show(idx + 1);
+  }});
 }})();
 </script>
 """
     return layout("Gallery", body)
+
+
+def map_page(pins: list[dict], species_options: list[str], selected_species: str = "") -> str:
+    """🗺️ Map of HER sightings that have a location."""
+    opts = ['<option value="">All species</option>'] + [
+        f'<option value="{_esc(s)}"{" selected" if s == selected_species else ""}>{_esc(s)}</option>'
+        for s in species_options
+    ]
+    pins_json = _json_script(pins)
+    if pins:
+        map_html = f"""
+<link rel="stylesheet" href="{LEAFLET_CSS}">
+<div id="sightings-map" class="range-map" role="img" aria-label="Sightings map"></div>
+<div id="range-map-fallback" class="map-fallback" hidden>
+  🗺️ The interactive map couldn't load (it needs the map library from the internet),
+  but your sightings are listed below.
+</div>
+<script type="application/json" id="map-pins">{pins_json}</script>
+<script src="{LEAFLET_JS}"></script>
+<script>
+(function () {{
+  var fallback = document.getElementById('range-map-fallback');
+  var el = document.getElementById('sightings-map');
+  if (typeof L === 'undefined') {{
+    el.style.display = 'none';
+    fallback.hidden = false;
+    return;
+  }}
+  var pins = JSON.parse(document.getElementById('map-pins').textContent);
+  var map = L.map('sightings-map', {{ scrollWheelZoom: false }});
+  L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+    maxZoom: 18,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }}).addTo(map);
+  var bounds = [];
+  pins.forEach(function (p) {{
+    var html = '';
+    if (p.thumb) html += '<img src="' + p.thumb.replace(/"/g, '') + '" class="map-thumb" alt="">';
+    html += '<div class="map-pin-title">' + p.species.replace(/</g, '&lt;') + '</div>';
+    if (p.date) html += '<div class="sci">' + p.date.replace(/</g, '&lt;') + '</div>';
+    html += '<a href="' + p.href.replace(/"/g, '') + '">View sighting →</a>';
+    L.marker([p.lat, p.lng]).addTo(map).bindPopup(html);
+    bounds.push([p.lat, p.lng]);
+  }});
+  if (bounds.length === 1) map.setView(bounds[0], 12);
+  else if (bounds.length) map.fitBounds(bounds, {{ padding: [32, 32] }});
+  else map.setView([39.5, -98.35], 3);
+  map.on('focus', function () {{ map.scrollWheelZoom.enable(); }});
+  map.on('blur', function () {{ map.scrollWheelZoom.disable(); }});
+}})();
+</script>"""
+    else:
+        map_html = (
+            '<div class="empty">Nothing to pin yet — '
+            '<a href="/observations/new">log a sighting with a location</a> '
+            'and it\u2019ll show up here. 🗺️</div>'
+        )
+    body = f"""
+<h2 class="section-title" style="margin-top:0">🗺️ Your sightings map</h2>
+<p class="hint">Every sighting you\u2019ve logged with a location, on one map.</p>
+<form class="search-bar" method="get" action="/map">
+  <select name="species" aria-label="Filter by species">
+    {"".join(opts)}
+  </select>
+  <button class="btn btn-secondary" type="submit">Filter</button>
+  {f'<a href="/map" class="clear-link">Clear</a>' if selected_species else ""}
+</form>
+{map_html}
+"""
+    return layout("Sightings map", body)
+
+
+def nearby_page(
+    home: dict, taxa: list[dict], error: str | None = None, from_cache: bool = False
+) -> str:
+    """📍 "Around you right now" — species being seen near home."""
+    place = home.get("name") or "your home"
+    if error == "no_home_location":
+        body = """
+<h2 class="section-title" style="margin-top:0">📍 Around you right now</h2>
+<div class="empty">
+  Tell me where home is and I\u2019ll show you what wildlife is being seen nearby.
+  <br><br><a class="btn" href="/settings">📍 Set your home location</a>
+</div>
+"""
+        return layout("Nearby", body)
+    if error == "fetch_failed":
+        note = "The wildlife database isn\u2019t answering right now — try again in a bit."
+    elif not taxa:
+        note = "No recent nearby observations in the wildlife database — check back soon."
+    else:
+        note = (
+            f"{len(taxa)} species seen recently within 25 km of {_esc(place)}"
+            + (" · cached" if from_cache else "")
+            + "."
+        )
+    cards = []
+    for t in taxa:
+        common = t.get("common_name") or t.get("scientific_name") or "Unknown"
+        sci = t.get("scientific_name") or ""
+        n = t.get("recent_count") or 0
+        photo = t.get("photo_url")
+        img = (
+            f'<img src="{_esc(photo)}" alt="{_esc(common)}" loading="lazy">'
+            if photo
+            else '<div class="no-photo">🦌</div>'
+        )
+        log_href = "/observations/new?" + urlencode(
+            {
+                "species_name": t.get("common_name") or t.get("scientific_name") or "",
+                "scientific_name": t.get("scientific_name") or "",
+            }
+        )
+        cards.append(f"""
+<article class="card nearby-card" data-taxon-id="{_esc(t.get('taxon_id'))}"
+         data-common="{_esc(t.get('common_name') or '')}"
+         data-scientific="{_esc(sci)}">
+  {img}
+  <div class="card-body">
+    <h3>{_esc(common)}</h3>
+    <div class="sci">{_esc(sci)}</div>
+    <div class="meta">👀 {n} recent nearby observation{'s' if n != 1 else ''}</div>
+    <div class="card-actions">
+      <a class="edit-link" href="{_esc(log_href)}">＋ Log it</a>
+      <button class="edit-link wishlist-add" type="button">＋ Wishlist</button>
+    </div>
+    <div class="wishlist-msg"></div>
+  </div>
+</article>""")
+    grid = '<div class="cards">\n' + "\n".join(cards) + "\n</div>" if cards else ""
+    body = f"""
+<h2 class="section-title" style="margin-top:0">📍 Around you right now</h2>
+<p class="hint">{note}</p>
+{grid}
+<script>
+(function () {{
+  document.querySelectorAll('.wishlist-add').forEach(function (btn) {{
+    btn.addEventListener('click', function () {{
+      var card = btn.closest('.nearby-card');
+      var msg = card.querySelector('.wishlist-msg');
+      btn.disabled = true;
+      fetch('/api/wishlist', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{
+          scientific_name: card.dataset.scientific || null,
+          common_name: card.dataset.common || null,
+          taxon_id: card.dataset.taxonId ? parseInt(card.dataset.taxonId, 10) : null
+        }})
+      }}).then(function (r) {{
+        if (r.status === 409) throw new Error('Already on your wishlist ⭐');
+        if (!r.ok) throw new Error('Could not add it.');
+        msg.innerHTML = '<div class="notice">✓ Added to your <a href="/wishlist">wishlist</a>.</div>';
+      }}).catch(function (ex) {{
+        msg.innerHTML = '<div class="notice">' + ex.message + '</div>';
+        btn.disabled = false;
+      }});
+    }});
+  }});
+}})();
+</script>
+"""
+    return layout("Nearby", body)
+
+
+def wishlist_page(items: list[dict]) -> str:
+    """⭐ Wishlist — species she'd love to find."""
+    cards = []
+    for w in items:
+        common = w.get("common_name") or w.get("scientific_name") or "Unknown"
+        sci = w.get("scientific_name") or ""
+        photo = w.get("photo_url")
+        img = (
+            f'<img src="{_esc(photo)}" alt="{_esc(common)}" loading="lazy">'
+            if photo
+            else '<div class="no-photo">⭐</div>'
+        )
+        seen = '<span class="seen-badge">Seen ✓</span>' if w.get("seen") else ""
+        range_link = (
+            f'<a class="edit-link" href="{_esc(w["range_href"])}">🗺️ Range map</a>'
+            if w.get("range_href")
+            else ""
+        )
+        notes = _esc(w.get("notes") or "")
+        cards.append(f"""
+<article class="card" data-wishlist="{w['id']}">
+  {img}
+  <div class="card-body">
+    <h3>{_esc(common)}{seen}</h3>
+    <div class="sci">{_esc(sci)}</div>
+    {f'<div class="notes">{notes}</div>' if notes else ""}
+    <div class="card-actions">
+      {range_link}
+      <button class="edit-link wishlist-remove" type="button" data-remove="{w['id']}">🗑️ Remove</button>
+    </div>
+  </div>
+</article>""")
+    grid = (
+        '<div class="cards">\n' + "\n".join(cards) + "\n</div>"
+        if cards
+        else '<div class="empty">Nothing on the wishlist yet — add something you\u2019d love to spot. ⭐</div>'
+    )
+    body = f"""
+<h2 class="section-title" style="margin-top:0">⭐ Wishlist</h2>
+<p class="hint">Species you\u2019d love to find. When you log one, it gets a <b>Seen ✓</b> badge all by itself.</p>
+<div class="form-card">
+  <div class="error" id="wish-error"></div>
+  <form id="wish-form">
+    <div class="field">
+      <label for="wish-species">Add a species</label>
+      <input type="text" id="wish-species" placeholder="Start typing — e.g. painted bunting" autocomplete="off">
+      <input type="hidden" id="wish-scientific">
+      <input type="hidden" id="wish-taxon">
+      <div class="autocomplete" id="wish-ac"></div>
+    </div>
+    <div class="field">
+      <label for="wish-notes">Notes (optional)</label>
+      <input type="text" id="wish-notes" placeholder="Heard one near the river last spring…">
+    </div>
+    <button class="btn" type="submit">＋ Add to wishlist</button>
+  </form>
+</div>
+<h3 class="section-title">Your list</h3>
+{grid}
+<script>
+(function () {{
+  var input = document.getElementById('wish-species');
+  var sci = document.getElementById('wish-scientific');
+  var taxon = document.getElementById('wish-taxon');
+  var list = document.getElementById('wish-ac');
+  var timer = null;
+  function close() {{ list.classList.remove('open'); list.innerHTML = ''; }}
+  input.addEventListener('input', function () {{
+    sci.value = ''; taxon.value = '';
+    clearTimeout(timer);
+    var q = input.value.trim();
+    if (q.length < 2) {{ close(); return; }}
+    timer = setTimeout(function () {{
+      fetch('/api/species/search?q=' + encodeURIComponent(q) + '&per_page=6')
+        .then(function (r) {{ return r.json(); }})
+        .then(function (data) {{
+          var results = (data && data.results) || [];
+          if (!results.length) {{ close(); return; }}
+          list.innerHTML = '';
+          results.forEach(function (t) {{
+            var item = document.createElement('div');
+            item.className = 'ac-item';
+            var img = t.photo_url ? '<img src="' + t.photo_url.replace(/"/g, '') + '" alt="">' : '<img alt="">';
+            item.innerHTML = img + '<div class="names"><div class="common"></div><div class="sci"></div></div>';
+            item.querySelector('.common').textContent = t.common_name || t.scientific_name || 'Unknown';
+            item.querySelector('.sci').textContent = t.scientific_name || '';
+            item.addEventListener('mousedown', function (e) {{
+              e.preventDefault();
+              input.value = t.common_name || t.scientific_name || '';
+              sci.value = t.scientific_name || '';
+              taxon.value = t.id || '';
+              close();
+            }});
+            list.appendChild(item);
+          }});
+          list.classList.add('open');
+        }})
+        .catch(function () {{ close(); }});
+    }}, 250);
+  }});
+  document.addEventListener('click', function (e) {{
+    if (!list.contains(e.target) && e.target !== input) close();
+  }});
+  document.getElementById('wish-form').addEventListener('submit', function (e) {{
+    e.preventDefault();
+    var err = document.getElementById('wish-error');
+    err.classList.remove('show');
+    var payload = {{
+      scientific_name: sci.value || null,
+      common_name: input.value.trim() || null,
+      taxon_id: taxon.value ? parseInt(taxon.value, 10) : null,
+      notes: document.getElementById('wish-notes').value.trim() || null
+    }};
+    if (!payload.common_name && !payload.scientific_name) {{
+      err.textContent = 'Name a species first.';
+      err.classList.add('show');
+      return;
+    }}
+    fetch('/api/wishlist', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify(payload)
+    }}).then(function (r) {{
+      if (r.status === 409) throw new Error('That one\u2019s already on your wishlist.');
+      if (!r.ok) throw new Error('Could not add it.');
+      window.location.reload();
+    }}).catch(function (ex) {{
+      err.textContent = ex.message;
+      err.classList.add('show');
+    }});
+  }});
+  document.querySelectorAll('[data-remove]').forEach(function (btn) {{
+    btn.addEventListener('click', function () {{
+      if (!confirm('Remove this from your wishlist?')) return;
+      fetch('/api/wishlist/' + btn.getAttribute('data-remove'), {{ method: 'DELETE' }})
+        .then(function (r) {{
+          if (!r.ok) throw new Error('remove failed');
+          var card = btn.closest('[data-wishlist]');
+          if (card) card.remove();
+        }})
+        .catch(function () {{}});
+    }});
+  }});
+}})();
+</script>
+"""
+    return layout("Wishlist", body)

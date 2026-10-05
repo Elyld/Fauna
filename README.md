@@ -60,6 +60,10 @@ Paste that into a new Dockge stack (or just use this repo's `docker-compose.yml`
 - [x] CSV export (`GET /api/observations/export.csv`, "Export CSV" button)
 - [x] eBird CSV import (`/import`): upload a "Download My Data" export → preview → confirm, with dedup
 - [x] Photo gallery (`/gallery`): all sighting photos in a grid, filterable by species + text search, with a lightbox view
+- [x] Multi-photo sightings: attach several photos per sighting (`POST /api/observations/{id}/photos`); the gallery lightbox cycles through them, the first photo stays the cover, and deleting a sighting removes all its files
+- [x] Sightings map (`/map`): Leaflet pins for every sighting with GPS coordinates, with a species filter — popups show a thumbnail, date, and a link to the sighting
+- [x] "Around you right now" (`/nearby`): the 12 species most recently observed within 25 km of your home location (research-grade iNaturalist data, cached 7 days), each with "＋ Log it" and "＋ Wishlist" buttons
+- [x] Wishlist (`/wishlist`): species you'd love to find, with thumbnails, notes, range-map links, and an automatic "Seen ✓" badge when you log one
 - [x] Mobile-friendly quick-log: responsive pages, bottom tab bar, camera-first photo capture, installable PWA
 
 ## Bringing your eBird history
@@ -89,9 +93,15 @@ Chrome's "Add to Home screen" / "Install app", on iOS use Safari's Share →
 "Add to Home Screen".
 
 Camera capture: photo inputs use `capture="environment"`, so on phones the
-camera opens directly (gallery is still offered by the OS picker). Offline
-support (service worker + cached sightings) is future work — the app needs a
-connection for species search, photo ID, and sound ID.
+camera opens directly (gallery is still offered by the OS picker).
+
+Offline support: a service worker (`/sw.js`) caches the app shell, pages, and
+photos, so the app opens with no signal. If you log a sighting while offline,
+it's queued in an on-device outbox (IndexedDB) — a "📶 N sightings waiting to
+sync" banner appears, and everything syncs through the normal API when the
+connection returns (automatically, or via "Sync now"). Species search, photo
+ID, and sound ID need a connection, and the app says so plainly instead of
+failing weirdly.
 
 Demo data + screenshots: with the app running, `scripts/seed_demo.py` seeds five charming observations (real iNaturalist names and photos) via the API, and `scripts/screenshots.py` captures `docs/screenshots/` with Chrome for Testing.
 
@@ -108,7 +118,57 @@ if the map library can't load.
 
 🖼️ Gallery shows every sighting photo in a grid, most recent first — filter
 by species or search, click any photo for a full-size lightbox with the
-species, date, and location. Sightings without photos simply don't appear.
+species, date, and location. Sightings can now carry **multiple photos**:
+attach several at once from the sighting form, and the lightbox lets you flip
+through them with ‹ › arrows or the keyboard. The first photo stays the cover
+everywhere else (cards, life list, exports). Older sightings that predate
+multi-photo get their existing photo carried over automatically.
+
+## Sightings map
+
+🗺️ **Map** pins every sighting you've logged with GPS coordinates — one map
+of where *you've* been (the species page shows where the species is normally
+seen; this is your own trail). Filter by species, click a pin for a thumbnail,
+date, and a link to the sighting. Sightings imported from eBird carry
+coordinates, so they show up too.
+
+## Around you right now
+
+📍 **Nearby** answers "what's being seen around me lately?": the 12 species
+most recently observed within 25 km of your home location, from research-grade
+iNaturalist observations. Set your home location once in ⚙️ Settings (there's a
+"📍 Use my location" button, or type coordinates by hand — it's only ever used
+for this lookup). Results are cached for 7 days per month — what's nearby
+changes seasonally, not daily. Each card has **＋ Log it** (prefills the
+sighting form) and **＋ Wishlist** buttons.
+
+## Wishlist
+
+⭐ **Wishlist** is the "hope to see" list: add species via the same iNaturalist
+autocomplete, with optional notes ("heard one near the river last spring").
+Each entry shows a thumbnail, a 🗺️ range-map link, and — the nice part — an
+automatic **Seen ✓** badge the moment you log that species. The badge is
+derived when the page loads, so there's nothing to keep in sync.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/nearby.png" width="400"><br><em>📍 Nearby — what's being seen around home</em></td>
+    <td><img src="docs/screenshots/map.png" width="400"><br><em>🗺️ Sightings map — her own trail</em></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/wishlist.png" width="400"><br><em>⭐ Wishlist — hope-to-see species</em></td>
+    <td><img src="docs/screenshots/gallery-multi.png" width="400"><br><em>🖼️ Gallery lightbox — flipping through one sighting's photos</em></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/backup.png" width="400"><br><em>💾 One-click full backup in Settings</em></td>
+    <td><img src="docs/screenshots/mobile-map.png" width="200"><br><em>🗺️ Map on mobile, with the bottom tab bar</em></td>
+  </tr>
+</table>
+
+More in `docs/screenshots/` (home, observations, life list, stats, identify,
+sound ID, import, gallery, and mobile views).
 
 ## Backups
 

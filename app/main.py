@@ -14,6 +14,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
@@ -28,11 +29,12 @@ from starlette.background import BackgroundTask
 from app import birdnet
 from app import ebird_import
 from app import inat
+from app import nearby as nearby_mod
 from app import pages
 from app import range_map
 from app import vision_id
 from app.database import DATABASE_URL, UPLOAD_DIR, SessionLocal, get_session, init_db
-from app.models import Observation, Setting
+from app.models import Observation, ObservationPhoto, Setting, Wishlist
 from app.version import APP_NAME, VERSION
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,10 @@ class ObservationIn(BaseModel):
 
 
 def _obs_to_dict(o: Observation) -> dict:
+    photos = [
+        {"id": p.id, "photo_path": p.photo_path, "photo_url": f"/photos/{p.photo_path}"}
+        for p in (o.photos or [])
+    ]
     return {
         "id": o.id,
         "species_name": o.species_name,
@@ -95,6 +101,7 @@ def _obs_to_dict(o: Observation) -> dict:
         "notes": o.notes,
         "photo_path": o.photo_path,
         "photo_url": f"/photos/{o.photo_path}" if o.photo_path else None,
+        "photos": photos,
         "needs_id": bool(o.needs_id) if o.needs_id is not None else False,
         "external_id": o.external_id,
         "created_at": o.created_at.isoformat() if o.created_at else None,
@@ -183,7 +190,7 @@ def health():
 # Settings (key/value store; secrets are never echoed back to the client)
 # ---------------------------------------------------------------------------
 
-PUBLIC_SETTINGS = {"vision_model"}
+PUBLIC_SETTINGS = {"vision_model", "home_latitude", "home_longitude", "home_name"}
 SECRET_SETTINGS = {"openrouter_api_key"}
 
 
@@ -216,6 +223,27 @@ def get_settings(session: Session = Depends(get_session)):
 class SettingsIn(BaseModel):
     openrouter_api_key: str | None = None  # empty string clears the stored key
     vision_model: str | None = None
+    home_latitude: str | None = None  # strings from the form; validated below
+    home_longitude: str | None = None
+    home_name: str | None = None
+
+
+def _parse_home_coord(value: str | None, *, lat: bool) -> str | None:
+    """Validate a home coordinate string; returns the canonical string or None
+    (blank clears it). Raises HTTPException(400) on junk."""
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        num = float(text)
+    except ValueError:
+        raise HTTPException(400, "home location must be numbers")
+    lo, hi = (-90.0, 90.0) if lat else (-180.0, 180.0)
+    if not (lo <= num <= hi):
+        raise HTTPException(400, "home location is out of range")
+    return str(num)
 
 
 @app.put("/api/settings")
@@ -228,17 +256,44 @@ def put_settings(payload: SettingsIn, session: Session = Depends(get_session)):
             "vision_model",
             payload.vision_model.strip() or vision_id.DEFAULT_VISION_MODEL,
         )
+    if payload.home_latitude is not None:
+        set_setting(session, "home_latitude", _parse_home_coord(payload.home_latitude, lat=True))
+    if payload.home_longitude is not None:
+        set_setting(session, "home_longitude", _parse_home_coord(payload.home_longitude, lat=False))
+    if payload.home_name is not None:
+        set_setting(session, "home_name", payload.home_name.strip() or None)
     return get_settings(session)
+
+
+def get_home_location(session: Session) -> dict:
+    """Home location from settings: {latitude, longitude, name} or Nones."""
+    lat = lon = None
+    try:
+        lat_raw = get_setting(session, "home_latitude")
+        lon_raw = get_setting(session, "home_longitude")
+        lat = float(lat_raw) if lat_raw else None
+        lon = float(lon_raw) if lon_raw else None
+    except (TypeError, ValueError):
+        lat = lon = None
+    return {
+        "latitude": lat,
+        "longitude": lon,
+        "name": get_setting(session, "home_name"),
+    }
 
 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(session: Session = Depends(get_session)):
+    home = get_home_location(session)
     return pages.settings_page(
         {
             "openrouter_api_key_configured": bool(get_setting(session, "openrouter_api_key")),
             "vision_model": get_setting(session, "vision_model")
             or vision_id.DEFAULT_VISION_MODEL,
             "default_vision_model": vision_id.DEFAULT_VISION_MODEL,
+            "home_latitude": get_setting(session, "home_latitude") or "",
+            "home_longitude": get_setting(session, "home_longitude") or "",
+            "home_name": get_setting(session, "home_name") or "",
         }
     )
 
@@ -566,6 +621,11 @@ def create_observation(payload: ObservationIn, session: Session = Depends(get_se
     session.add(obs)
     session.commit()
     session.refresh(obs)
+    if obs.photo_path:
+        # Track the claimed pending photo in the multi-photo table too.
+        session.add(ObservationPhoto(observation_id=obs.id, photo_path=obs.photo_path))
+        session.commit()
+        session.refresh(obs)
     return _obs_to_dict(obs)
 
 
@@ -574,32 +634,129 @@ def delete_observation(obs_id: int, session: Session = Depends(get_session)):
     obs = session.get(Observation, obs_id)
     if obs is None:
         raise HTTPException(404, "observation not found")
-    photo = obs.photo_path
+    photo_names = [p.photo_path for p in (obs.photos or [])]
+    if obs.photo_path and obs.photo_path not in photo_names:
+        photo_names.append(obs.photo_path)
     session.delete(obs)
     session.commit()
-    if photo:
-        # don't orphan the image file on disk
-        (UPLOAD_DIR / Path(photo).name).unlink(missing_ok=True)
+    for name in photo_names:
+        # don't orphan image files on disk
+        (UPLOAD_DIR / Path(name).name).unlink(missing_ok=True)
     return {"deleted": obs_id}
 
 
-@app.post("/api/observations/{obs_id}/photo")
-def upload_photo(
-    obs_id: int, file: UploadFile = File(...), session: Session = Depends(get_session)
-):
-    obs = session.get(Observation, obs_id)
-    if obs is None:
-        raise HTTPException(404, "observation not found")
+def _store_upload(file: UploadFile) -> str:
+    """Validate + save one uploaded photo; returns its stored filename."""
     ext = Path(file.filename or "").suffix.lower()[:10]
     if ext not in ALLOWED_PHOTO_EXTS:
         raise HTTPException(400, "unsupported image type")
     name = f"{uuid.uuid4().hex}{ext}"
     with (UPLOAD_DIR / name).open("wb") as f:
         shutil.copyfileobj(file.file, f)
-    if obs.photo_path:
-        (UPLOAD_DIR / obs.photo_path).unlink(missing_ok=True)
+    return name
+
+
+def _add_photo_row(session: Session, obs: Observation, name: str) -> ObservationPhoto:
+    """Attach a stored photo; first photo also becomes the cover."""
+    row = ObservationPhoto(observation_id=obs.id, photo_path=name)
+    session.add(row)
+    session.flush()
+    if not obs.photo_path:
+        obs.photo_path = name
+    return row
+
+
+def _remove_photo_row(session: Session, obs: Observation, row: ObservationPhoto) -> None:
+    """Delete one photo: file + row; promote the next photo if it was the cover."""
+    (UPLOAD_DIR / Path(row.photo_path).name).unlink(missing_ok=True)
+    was_cover = obs.photo_path == row.photo_path
+    session.delete(row)
+    session.flush()
+    if was_cover:
+        nxt = (
+            session.query(ObservationPhoto)
+            .filter(ObservationPhoto.observation_id == obs.id)
+            .order_by(ObservationPhoto.id.asc())
+            .first()
+        )
+        obs.photo_path = nxt.photo_path if nxt else None
+
+
+@app.post("/api/observations/{obs_id}/photo")
+def upload_photo(
+    obs_id: int, file: UploadFile = File(...), session: Session = Depends(get_session)
+):
+    """Single-photo upload: the new photo becomes the cover (classic behavior).
+
+    The previous cover photo is removed; the new one is also tracked in the
+    multi-photo table so the gallery/lightbox sees it.
+    """
+    obs = session.get(Observation, obs_id)
+    if obs is None:
+        raise HTTPException(404, "observation not found")
+    name = _store_upload(file)
+    old_cover = obs.photo_path
     obs.photo_path = name
+    row = ObservationPhoto(observation_id=obs.id, photo_path=name)
+    session.add(row)
+    session.flush()
+    if old_cover and old_cover != name:
+        old_row = (
+            session.query(ObservationPhoto)
+            .filter(
+                ObservationPhoto.observation_id == obs.id,
+                ObservationPhoto.photo_path == old_cover,
+            )
+            .first()
+        )
+        if old_row is not None:
+            _remove_photo_row(session, obs, old_row)
+            obs.photo_path = name  # keep the new photo as cover
+        else:
+            (UPLOAD_DIR / Path(old_cover).name).unlink(missing_ok=True)
     session.commit()
+    session.refresh(obs)
+    return _obs_to_dict(obs)
+
+
+@app.post("/api/observations/{obs_id}/photos")
+def upload_photos(
+    obs_id: int,
+    files: list[UploadFile] = File(...),
+    session: Session = Depends(get_session),
+):
+    """Multi-photo upload: attach several photos to a sighting at once.
+
+    Each file has the same 10MB cap (enforced by the ASGI layer on reads —
+    we check size while writing) and extension allowlist. The first photo
+    ever attached becomes the cover; the cover otherwise stays put.
+    """
+    obs = session.get(Observation, obs_id)
+    if obs is None:
+        raise HTTPException(404, "observation not found")
+    if not files:
+        raise HTTPException(400, "no photos attached")
+    names = [_store_upload(f) for f in files]
+    for name in names:
+        _add_photo_row(session, obs, name)
+    session.commit()
+    session.refresh(obs)
+    return _obs_to_dict(obs)
+
+
+@app.delete("/api/observations/{obs_id}/photos/{photo_id}")
+def delete_photo(
+    obs_id: int, photo_id: int, session: Session = Depends(get_session)
+):
+    obs = session.get(Observation, obs_id)
+    if obs is None:
+        raise HTTPException(404, "observation not found")
+    row = session.get(ObservationPhoto, photo_id)
+    if row is None or row.observation_id != obs.id:
+        raise HTTPException(404, "photo not found")
+    _remove_photo_row(session, obs, row)
+    session.commit()
+    session.refresh(obs)
     return _obs_to_dict(obs)
 
 
@@ -982,3 +1139,225 @@ def gallery_page_route(
         selected_species=species or "",
         q=q or "",
     )
+
+
+# ---------------------------------------------------------------------------
+# Sightings map — pins for HER sightings that have a location
+# ---------------------------------------------------------------------------
+
+
+def _date_label(iso: str | None) -> str:
+    if not iso:
+        return ""
+    try:
+        return datetime.fromisoformat(iso).strftime("%b %d, %Y")
+    except ValueError:
+        return iso
+
+
+def _mapped_species_options(session: Session) -> list[str]:
+    rows = (
+        session.query(Observation.species_name)
+        .filter(Observation.latitude.isnot(None), Observation.longitude.isnot(None))
+        .filter(Observation.species_name.isnot(None))
+        .distinct()
+        .all()
+    )
+    return sorted({r[0] for r in rows if r[0]}, key=str.lower)
+
+
+@app.get("/map", response_class=HTMLResponse)
+def map_page_route(
+    species: str | None = Query(None), session: Session = Depends(get_session)
+):
+    query = session.query(Observation).filter(
+        Observation.latitude.isnot(None), Observation.longitude.isnot(None)
+    )
+    if species and species.strip():
+        query = query.filter(
+            func.lower(Observation.species_name) == species.strip().lower()
+        )
+    pins = []
+    for o in query.order_by(Observation.id.desc()).all():
+        pins.append(
+            {
+                "lat": o.latitude,
+                "lng": o.longitude,
+                "species": o.species_name or "Unknown visitor",
+                "scientific": o.scientific_name or "",
+                "date": _date_label(o.observed_at.isoformat() if o.observed_at else None),
+                "thumb": f"/photos/{o.photo_path}" if o.photo_path else None,
+                "href": (
+                    f"/observations?q={quote(o.species_name)}"
+                    if o.species_name
+                    else "/observations"
+                ),
+            }
+        )
+    return pages.map_page(
+        pins,
+        species_options=_mapped_species_options(session),
+        selected_species=species or "",
+    )
+
+
+# ---------------------------------------------------------------------------
+# "Around you right now" — species being seen near home
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/nearby")
+def nearby_api(session: Session = Depends(get_session)):
+    home = get_home_location(session)
+    if home["latitude"] is None or home["longitude"] is None:
+        return {
+            "taxa": [],
+            "from_cache": False,
+            "error": "no_home_location",
+            "home": home,
+        }
+    data = nearby_mod.get_nearby(session, home["latitude"], home["longitude"])
+    data["home"] = home
+    return data
+
+
+@app.get("/nearby", response_class=HTMLResponse)
+def nearby_page_route(session: Session = Depends(get_session)):
+    home = get_home_location(session)
+    if home["latitude"] is None or home["longitude"] is None:
+        return pages.nearby_page(home=home, taxa=[], error="no_home_location")
+    data = nearby_mod.get_nearby(session, home["latitude"], home["longitude"])
+    return pages.nearby_page(
+        home=home, taxa=data["taxa"], error=data["error"], from_cache=data["from_cache"]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Wishlist — species she'd love to find
+# ---------------------------------------------------------------------------
+
+
+class WishlistIn(BaseModel):
+    scientific_name: str | None = None
+    common_name: str | None = None
+    taxon_id: int | None = None
+    notes: str | None = None
+
+
+def _wishlist_seen(session: Session, item: Wishlist) -> bool:
+    """Seen ✓ is derived at read time: any sighting matching the name."""
+    names = {
+        n.strip().lower()
+        for n in (item.scientific_name, item.common_name)
+        if n and n.strip()
+    }
+    if not names:
+        return False
+    return (
+        session.query(Observation.id)
+        .filter(
+            or_(
+                func.lower(Observation.scientific_name).in_(names),
+                func.lower(Observation.species_name).in_(names),
+            )
+        )
+        .first()
+        is not None
+    )
+
+
+def _wishlist_to_dict(session: Session, item: Wishlist) -> dict:
+    return {
+        "id": item.id,
+        "scientific_name": item.scientific_name,
+        "common_name": item.common_name,
+        "taxon_id": item.taxon_id,
+        "notes": item.notes,
+        "seen": _wishlist_seen(session, item),
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+@app.get("/api/wishlist")
+def list_wishlist(session: Session = Depends(get_session)):
+    items = session.query(Wishlist).order_by(Wishlist.id.desc()).all()
+    return {"wishlist": [_wishlist_to_dict(session, w) for w in items]}
+
+
+@app.post("/api/wishlist")
+def add_wishlist(payload: WishlistIn, session: Session = Depends(get_session)):
+    sci = (payload.scientific_name or "").strip() or None
+    common = (payload.common_name or "").strip() or None
+    if not (sci or common):
+        raise HTTPException(400, "name a species first")
+    if sci:
+        dupe = (
+            session.query(Wishlist)
+            .filter(func.lower(Wishlist.scientific_name) == sci.lower())
+            .first()
+        )
+        if dupe:
+            raise HTTPException(409, "already on your wishlist")
+    item = Wishlist(
+        scientific_name=sci,
+        common_name=common,
+        taxon_id=payload.taxon_id,
+        notes=(payload.notes or "").strip() or None,
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return _wishlist_to_dict(session, item)
+
+
+@app.delete("/api/wishlist/{item_id}")
+def remove_wishlist(item_id: int, session: Session = Depends(get_session)):
+    item = session.get(Wishlist, item_id)
+    if item is None:
+        raise HTTPException(404, "wishlist item not found")
+    session.delete(item)
+    session.commit()
+    return {"deleted": item_id}
+
+
+@app.get("/wishlist", response_class=HTMLResponse)
+def wishlist_page_route(session: Session = Depends(get_session)):
+    items = session.query(Wishlist).order_by(Wishlist.id.desc()).all()
+    # Thumbnails come from the free iNaturalist taxonomy lookup; per-name
+    # memoized so a long list doesn't repeat queries. Never breaks the page.
+    thumb_cache: dict[str, dict | None] = {}
+
+    def _thumb_for(item: Wishlist) -> dict | None:
+        name = (item.scientific_name or item.common_name or "").strip()
+        if not name:
+            return None
+        if name not in thumb_cache:
+            try:
+                thumb_cache[name] = _taxon_info(name)
+            except Exception:  # noqa: BLE001 — thumbnails are a nicety
+                thumb_cache[name] = None
+        return thumb_cache[name]
+
+    cards = []
+    for item in items:
+        d = _wishlist_to_dict(session, item)
+        taxon = _thumb_for(item)
+        d["photo_url"] = (taxon or {}).get("photo_url")
+        d["range_href"] = (
+            f"/species/{item.scientific_name}" if item.scientific_name else None
+        )
+        cards.append(d)
+    return pages.wishlist_page(cards)
+
+
+# ---------------------------------------------------------------------------
+# Service worker (offline mode)
+# ---------------------------------------------------------------------------
+
+SW_JS_PATH = Path(__file__).resolve().parent / "static" / "js" / "sw.js"
+
+
+@app.get("/sw.js")
+def service_worker():
+    """The offline service worker (registered from the layout)."""
+    return FileResponse(str(SW_JS_PATH), media_type="application/javascript")

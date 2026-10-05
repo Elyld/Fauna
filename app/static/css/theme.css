@@ -774,3 +774,115 @@ footer {
   .species-head { gap: 0.9rem; }
   .species-photo { width: 88px; height: 88px; }
 }
+
+/* ---- Batch 2: multi-photo, map, nearby, wishlist, offline ---- */
+
+/* Offline + outbox banners (below the header, above content) */
+.offline-bar, .outbox-banner {
+  background: var(--cream-deep);
+  border-bottom: 1px solid var(--border);
+  color: var(--cocoa);
+  font-size: 0.9rem;
+  padding: 0.55rem 1rem;
+  text-align: center;
+}
+.outbox-banner {
+  background: #fdf3e3;
+}
+.outbox-banner .btn {
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.8rem;
+  font-size: 0.85rem;
+}
+
+/* Multi-photo strips (form previews + edit-mode existing photos) */
+.photo-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.photo-thumb {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+.photo-chip {
+  position: relative;
+  width: 96px;
+  height: 96px;
+}
+.photo-chip img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+.photo-del {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--mauve-deep);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Lightbox prev/next */
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(250, 245, 238, 0.9);
+  border: 1px solid var(--border);
+  color: var(--mauve-deep);
+  font-size: 2rem;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 1;
+}
+.lightbox-prev { left: 0.75rem; }
+.lightbox-next { right: 0.75rem; }
+
+/* Map popups */
+.map-thumb {
+  width: 120px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  margin-bottom: 0.35rem;
+}
+.map-pin-title {
+  font-weight: 700;
+  color: var(--cocoa);
+}
+
+/* Wishlist seen badge */
+.seen-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  background: #e3ecdc;
+  color: #5c7a4e;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+.wishlist-msg { margin-top: 0.5rem; }
+
+@media (max-width: 700px) {
+  .lightbox-prev { left: 0.35rem; }
+  .lightbox-next { right: 0.35rem; }
+}
