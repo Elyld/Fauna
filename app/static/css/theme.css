@@ -656,3 +656,9 @@ footer {
   .bar-label { font-size: 0.6rem; }
   .search-bar .btn { width: 100%; }
 }
+
+/* eBird import preview */
+.stat-line { font-size: 1.05rem; }
+.preview-table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.95rem; }
+.preview-table th, .preview-table td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); }
+.preview-table th { color: var(--teddy-dark); font-weight: 600; }

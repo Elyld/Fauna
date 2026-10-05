@@ -20,6 +20,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import birdnet
+from app import ebird_import
 from app import inat
 from app import pages
 from app import vision_id
@@ -86,6 +87,7 @@ def _obs_to_dict(o: Observation) -> dict:
         "photo_path": o.photo_path,
         "photo_url": f"/photos/{o.photo_path}" if o.photo_path else None,
         "needs_id": bool(o.needs_id) if o.needs_id is not None else False,
+        "external_id": o.external_id,
         "created_at": o.created_at.isoformat() if o.created_at else None,
     }
 
@@ -287,6 +289,105 @@ def export_observations_csv(session: Session = Depends(get_session)):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=fauna-observations.csv"},
     )
+
+
+MAX_IMPORT_BYTES = 10 * 1024 * 1024  # same cap as other uploads
+
+
+def _existing_external_ids(session: Session) -> set[str]:
+    rows = (
+        session.query(Observation.external_id)
+        .filter(Observation.external_id.isnot(None))
+        .all()
+    )
+    return {r[0] for r in rows}
+
+
+@app.post("/api/import/ebird/preview")
+async def ebird_import_preview(
+    file: UploadFile = File(...), session: Session = Depends(get_session)
+):
+    """Parse an eBird 'Download My Data' CSV and report what would import.
+
+    Two-step flow: the client shows this summary, then POSTs the returned
+    ``new`` rows back to /api/import/ebird/confirm. Stateless on the server.
+    """
+    data = await file.read()
+    if len(data) > MAX_IMPORT_BYTES:
+        raise HTTPException(413, "file too large (10MB max)")
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(400, "could not read file as text/CSV")
+    parsed = ebird_import.parse_ebird_csv(text)
+    new, already = ebird_import.dedup_against(
+        _existing_external_ids(session), parsed["rows"]
+    )
+    return {
+        "total_rows": len(parsed["rows"]),
+        "new_count": len(new),
+        "already_count": len(already),
+        "skipped": parsed["skipped"],
+        "new": new,  # post these back to /confirm
+    }
+
+
+class EboidImportConfirm(BaseModel):
+    rows: list[dict]
+
+
+@app.post("/api/import/ebird/confirm")
+def ebird_import_confirm(
+    payload: EboidImportConfirm, session: Session = Depends(get_session)
+):
+    """Insert previewed rows. Re-checks dedup so re-imports are a safe no-op."""
+    existing = _existing_external_ids(session)
+    imported = 0
+    skipped_dupes = 0
+    skipped_invalid = 0
+    for row in payload.rows:
+        if not isinstance(row, dict) or not (
+            row.get("species_name") or row.get("scientific_name")
+        ):
+            skipped_invalid += 1
+            continue
+        ext = row.get("external_id")
+        if ext and ext in existing:
+            skipped_dupes += 1
+            continue
+        observed_at = None
+        if row.get("observed_at"):
+            try:
+                observed_at = datetime.fromisoformat(row["observed_at"])
+            except ValueError:
+                observed_at = None
+        obs = Observation(
+            species_name=row.get("species_name"),
+            scientific_name=row.get("scientific_name"),
+            count=row.get("count"),
+            observed_at=observed_at,
+            latitude=row.get("latitude"),
+            longitude=row.get("longitude"),
+            location_name=row.get("location_name"),
+            notes=row.get("notes"),
+            needs_id=False,
+            external_id=ext,
+        )
+        session.add(obs)
+        if ext:
+            existing.add(ext)
+        imported += 1
+    session.commit()
+    return {
+        "imported": imported,
+        "skipped_dupes": skipped_dupes,
+        "skipped_invalid": skipped_invalid,
+    }
+
+
+@app.get("/import", response_class=HTMLResponse)
+def import_page_route():
+    return pages.import_page()
 
 
 @app.put("/api/observations/{obs_id}")

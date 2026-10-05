@@ -58,8 +58,23 @@ Paste that into a new Dockge stack (or just use this repo's `docker-compose.yml`
 - [x] Observation search & "needs ID" filter on `/observations` (+ `?q=` / `?needs_id=` on the JSON API)
 - [x] Edit sightings (`/observations/{id}/edit`, `PUT /api/observations/{id}`)
 - [x] CSV export (`GET /api/observations/export.csv`, "Export CSV" button)
+- [x] eBird CSV import (`/import`): upload a "Download My Data" export → preview → confirm, with dedup
 - [ ] Photo gallery
 - [x] Mobile-friendly quick-log: responsive pages, bottom tab bar, camera-first photo capture, installable PWA
+
+## Bringing your eBird history
+
+If you've been logging birds in eBird or Merlin, bring it all over:
+
+1. On [eBird.org](https://ebird.org) go to **My eBird → Download My Data** and download the CSV.
+2. In Fauna open **⬆️ Import**, upload the file, and check the preview.
+3. Hit **Import** — done.
+
+The preview shows exactly what will happen first: how many sightings are new,
+how many are already in your journal (skipped automatically via each row's
+eBird Submission ID), and which rows were skipped and why. Importing the same
+file twice is a safe no-op. `X` counts ("present, not counted") come in as 1
+with a note; dates/times, locations, and your observation notes all carry over.
 
 ## Mobile + PWA
 

@@ -53,6 +53,7 @@ def layout(title: str, body: str) -> str:
     <a href="/stats">📊 Stats</a>
     <a href="/identify">🔍 Identify</a>
     <a href="/identify-audio">🎵 Sound ID</a>
+    <a href="/import">⬆️ Import</a>
     <a href="/observations/new">+ Log a sighting</a>
     <a href="/settings">⚙️ Settings</a>
   </nav>
@@ -957,3 +958,79 @@ def edit_observation_page(obs: dict) -> str:
         },
         mode="edit",
     )
+
+
+def import_page() -> str:
+    body = """
+<h2 class="section-title" style="margin-top:0">⬆️ Bring your eBird history</h2>
+<div class="form-card">
+  <p>On eBird.org go to <b>My eBird → Download My Data</b>, then upload the CSV
+  here. I'll show you exactly what I found <i>before</i> anything gets saved —
+  and sightings you've already imported are skipped automatically.</p>
+  <div class="field">
+    <label for="csv">eBird CSV file</label>
+    <input type="file" id="csv" accept=".csv,text/csv">
+  </div>
+  <div class="error" id="import-error"></div>
+  <button class="btn-big" id="preview-btn" type="button">Preview import</button>
+</div>
+<div id="preview-result"></div>
+<script>
+let pendingRows = [];
+function _esc(s){return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+document.getElementById('preview-btn').addEventListener('click', async () => {
+  const err = document.getElementById('import-error');
+  err.textContent = '';
+  const f = document.getElementById('csv').files[0];
+  if (!f) { err.textContent = 'Pick a CSV file first.'; return; }
+  const fd = new FormData(); fd.append('file', f);
+  const btn = document.getElementById('preview-btn');
+  btn.disabled = true; btn.textContent = 'Reading…';
+  try {
+    const r = await fetch('/api/import/ebird/preview', {method: 'POST', body: fd});
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || 'preview failed'); }
+    const d = await r.json();
+    pendingRows = d.new;
+    renderPreview(d);
+  } catch (e) { err.textContent = e.message; }
+  finally { btn.disabled = false; btn.textContent = 'Preview import'; }
+});
+function rowHtml(r) {
+  const d = r.observed_at ? r.observed_at.slice(0, 10) : '—';
+  return `<tr><td>${_esc(r.species_name || '')}<div class="sci">${_esc(r.scientific_name || '')}</div></td><td>${_esc(d)}</td><td>${_esc(r.location_name || '—')}</td></tr>`;
+}
+function renderPreview(d) {
+  const box = document.getElementById('preview-result');
+  const sample = d.new.slice(0, 5).map(rowHtml).join('');
+  const skips = d.skipped.slice(0, 8).map(s => `<li>Row ${s.line}: ${_esc(s.reason)}</li>`).join('');
+  box.innerHTML = `
+  <div class="form-card" style="margin-top:1rem">
+    <h3>Ready when you are</h3>
+    <p class="stat-line"><b>${d.new_count}</b> new sightings &middot; <b>${d.already_count}</b> already in your journal &middot; <b>${d.skipped.length}</b> skipped</p>
+    ${sample ? `<table class="preview-table"><thead><tr><th>Species</th><th>Date</th><th>Where</th></tr></thead><tbody>${sample}</tbody></table>` : '<p>No new sightings in this file.</p>'}
+    ${skips ? `<details class="details-card"><summary>Skipped rows (${d.skipped.length})</summary><ul>${skips}</ul></details>` : ''}
+    ${d.new_count ? `<button class="btn-big" id="confirm-btn" type="button">Import ${d.new_count} sightings</button>` : ''}
+    <div class="error" id="confirm-error"></div>
+  </div>`;
+  const cb = document.getElementById('confirm-btn');
+  if (cb) cb.addEventListener('click', confirmImport);
+}
+async function confirmImport() {
+  const ce = document.getElementById('confirm-error'); ce.textContent = '';
+  const btn = document.getElementById('confirm-btn');
+  btn.disabled = true; btn.textContent = 'Importing…';
+  try {
+    const r = await fetch('/api/import/ebird/confirm', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({rows: pendingRows})});
+    if (!r.ok) throw new Error('import failed');
+    const d = await r.json();
+    document.getElementById('preview-result').innerHTML = `
+    <div class="form-card" style="margin-top:1rem">
+      <h3>🎉 All set!</h3>
+      <p><b>${d.imported}</b> sightings added to your journal${d.skipped_dupes ? ` &middot; ${d.skipped_dupes} already imported` : ''}.</p>
+      <p><a href="/observations">Browse your sightings</a> &middot; <a href="/life-list">See your life list</a></p>
+    </div>`;
+  } catch (e) { ce.textContent = e.message; btn.disabled = false; btn.textContent = 'Import sightings'; }
+}
+</script>
+"""
+    return layout("Import from eBird", body)

@@ -29,6 +29,9 @@ class Observation(Base):
     needs_id: Mapped[bool | None] = mapped_column(
         Boolean, nullable=True
     )  # True = "I'm not sure what this is" — ID still needs confirming
+    external_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # e.g. "ebird:S12345678" — dedup key for imports
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
