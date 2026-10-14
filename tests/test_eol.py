@@ -347,6 +347,24 @@ def test_eol_section_renders_cards_and_description():
     assert "Read more" not in html2
 
 
+def test_eol_section_credits_local_trait_pack():
+    base = {
+        "summary": "A fox.",
+        "eol_url": "https://eol.org/pages/7",
+        "traits": [{"icon": "🍽️", "label": "Diet", "value": "omnivore"}],
+    }
+    local = pages._eol_section({**base, "traits_source": "local"})
+    assert "EltonTraits" in local and "AnAge" in local
+    assert "AVONET" in local and "PanTHERIA" in local
+    # EOL-sourced cards keep the section's existing EOL credit only
+    eol = pages._eol_section({**base, "traits_source": "eol"})
+    assert "EltonTraits" not in eol
+    # cached payloads written before traits_source existed render fine
+    legacy = pages._eol_section(base)
+    assert "Did you know" in legacy
+    assert "EltonTraits" not in legacy
+
+
 def test_clean_description_strips_boilerplate():
     raw = "<p>More info for the term: fruit Red foxes are omnivorous.</p>"
     assert eol._clean_description(raw) == "Red foxes are omnivorous."
@@ -365,3 +383,50 @@ def test_fetch_description_prefers_overview(monkeypatch):
     d = eol.fetch_description(9)
     assert d is not None
     assert d["text"].startswith("Foxes are clever")
+
+
+def test_species_info_refetches_on_version_change(monkeypatch):
+    """Stale cache from an older app version must not hide new card sources.
+
+    Regression test: v0.3.0 cached traits=None (no local pack yet); after
+    upgrading to v0.4.0 the cached payload must be ignored so the local
+    trait pack gets a chance.
+    """
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "search" in url:
+            return _FakeResp({"results": [{"id": 7, "title": "Vulpes vulpes"}]})
+        if "brief_summary" in url:
+            return _FakeResp({"brief_summary": "A fox."})
+        if "pages/1.0" in url:
+            return _FakeResp({"taxonConcept": {"dataObjects": []}})
+        raise AssertionError(url)
+
+    monkeypatch.setattr(eol.httpx, "get", fake_get)
+    session = SessionLocal()
+    try:
+        # Simulate a v0.3.0-era cached payload (no version field, no traits).
+        eol._write_cache(session, eol._key("Vulpes vulpes"), {
+            "summary": "A fox.",
+            "eol_url": "https://eol.org/pages/7",
+            "page_id": 7,
+            "description": None,
+            "traits": None,
+            "traits_source": None,
+            "key_hash": eol._key_hash(None),
+        })
+        info = eol.get_species_info(session, "Vulpes vulpes")
+        # Cache must be ignored: fresh lookup runs and local cards appear.
+        assert info["traits"], "stale v0.3.0 cache hid the local trait pack"
+        assert info["version"] == eol.VERSION
+        # Second call hits the fresh cache (no extra HTTP).
+        calls = {"n": 0}
+        orig = eol.httpx.get
+        def counting_get(*a, **k):
+            calls["n"] += 1
+            return orig(*a, **k)
+        monkeypatch.setattr(eol.httpx, "get", counting_get)
+        info2 = eol.get_species_info(session, "Vulpes vulpes")
+        assert calls["n"] == 0
+        assert info2["traits"] == info["traits"]
+    finally:
+        session.close()
