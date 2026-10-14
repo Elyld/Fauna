@@ -43,6 +43,15 @@ def init_db() -> None:
             conn.exec_driver_sql("PRAGMA foreign_keys=ON")
     _apply_column_migrations()
     _backfill_photo_rows()
+    _load_trait_pack()
+
+
+def _load_trait_pack() -> None:
+    """One-time import of the bundled offline trait pack (idempotent)."""
+    from app import trait_pack
+
+    with SessionLocal() as session:
+        trait_pack.ensure_loaded(session)
 
 
 def _backfill_photo_rows() -> None:
