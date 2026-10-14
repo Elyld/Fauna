@@ -66,12 +66,24 @@ Paste that into a new Dockge stack (or just use this repo's `docker-compose.yml`
 - [x] Wishlist (`/wishlist`): species you'd love to find, with thumbnails, notes, range-map links, and an automatic "Seen ✓" badge when you log one
 - [x] Mobile-friendly quick-log: responsive pages, bottom tab bar, camera-first photo capture, installable PWA
 - [x] Species write-ups (`/species/<name>`): "About this species" summaries from the Encyclopedia of Life (free API, no key), cached 30 days, with attribution — fun facts like diet, lifespan, and behavior
-- [x] EOL extras: "✨ Did you know" fact cards (weight, diet, lifespan, habitat…) from EOL's TraitBank structured-data API, plus an expandable full article when EOL has English text. Needs a free EOL API key (see below) — without one, species pages just show the summary.
+- [x] EOL extras: "✨ Did you know" fact cards (weight, diet, lifespan, habitat…) from a bundled offline trait pack — no API key, no internet needed — plus an expandable full article when EOL has English text. An EOL API key (see below) adds TraitBank data for species the pack doesn't cover.
 
-## Encyclopedia of Life API key (optional, for fact cards)
+## Offline trait pack (fact cards, no key needed)
 
-The species summary works with no key. The "did you know" fact cards use
-EOL's structured-data API, which needs a free token:
+The "did you know" cards read from four public scientific datasets shipped
+with the app (8 MB in `app/trait_data/`), imported once into the database
+at startup — no API key, no rate limits, works offline:
+
+- **EltonTraits 1.0** (Wilman et al. 2014) — diet/foraging for all birds + mammals
+- **AnAge** (de Magalhães & Costa) — longevity and body mass, CC-BY 3.0
+- **AVONET** (Tobías et al. 2022) — bird measurements, habitat, trophic niche, CC-BY 4.0
+- **PanTHERIA** (Jones et al. 2009) — mammal life history
+
+## Encyclopedia of Life API key (optional fallback)
+
+The species summary and the fact cards above work with no key. If you add
+a free EOL token, species the trait pack doesn't cover (insects, fish,
+plants, …) get fact cards from EOL's TraitBank structured-data API too:
 
 1. Sign in (or make an account) at <https://eol.org/users/sign_in>
 2. Email `hammockj AT si.edu` with your EOL username, asking to be made a "power user"

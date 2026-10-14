@@ -293,15 +293,17 @@ def test_species_info_refetches_when_key_added(monkeypatch):
     session = SessionLocal()
     try:
         no_key = eol.get_species_info(session, "Vulpes vulpes")
-        assert no_key["traits"] is None
+        # Local trait pack is the primary card source: cards work with no key.
+        assert isinstance(no_key["traits"], list) and no_key["traits"]
+        assert {c["label"] for c in no_key["traits"]} >= {"Weight", "Diet"}
         n1 = calls["n"]
         # cached: no refetch without key change
         eol.get_species_info(session, "Vulpes vulpes")
         assert calls["n"] == n1
-        # key added -> refetch (picks up traits)
+        # key added -> refetch (EOL stays the fallback for uncovered species)
         with_key = eol.get_species_info(session, "Vulpes vulpes", api_key="k1")
         assert calls["n"] > n1
-        assert with_key["traits"] == []
+        assert with_key["traits"] == no_key["traits"]
     finally:
         session.close()
 

@@ -114,3 +114,22 @@ class SpeciesInfoCache(Base):
     taxon_key: Mapped[str] = mapped_column(String(255), primary_key=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class LocalTrait(Base):
+    """One fact from the bundled offline trait pack.
+
+    Populated once from the CSVs in app/trait_data/ (EltonTraits, AnAge,
+    AVONET, PanTHERIA — all CC-licensed scientific datasets). Keyed by
+    lowercase scientific name. ``predicate`` uses the same vocabulary as
+    app.eol.CARD_RULES fragments so both sources feed one card pipeline;
+    ``value`` is a pre-formatted display string ("85 kg", "fruit 70%").
+    """
+
+    __tablename__ = "local_traits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scientific_name: Mapped[str] = mapped_column(String(255), index=True)
+    dataset: Mapped[str] = mapped_column(String(32))
+    predicate: Mapped[str] = mapped_column(String(128))
+    value: Mapped[str] = mapped_column(String(512))
