@@ -19,8 +19,10 @@ eol.org/services/authenticate. It's pasted once in Fauna's Settings.
 Results are cached 30 days in species_info_cache — descriptions barely
 change, and page views must never hammer the API. The cache records a
 hash of the API key so adding/changing the key refetches (to pick up
-traits). Every public function is defensive: failures return None, never
-raise — a missing write-up must never break the page around it.
+traits), plus the app version so upgrades refetch too (new card sources
+must not sit behind a stale cache). Every public function is defensive:
+failures return None, never raise — a missing write-up must never break
+the page around it.
 """
 from __future__ import annotations
 
@@ -37,6 +39,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.models import SpeciesInfoCache
+from app.version import VERSION
 
 EOL_BASE = "https://eol.org"
 CYPHER_URL = "https://eol.org/service/cypher"
@@ -305,6 +308,7 @@ def get_species_info(
             cached
             and cached["fresh"]
             and cached["value"].get("key_hash") == current_hash
+            and cached["value"].get("version") == VERSION
         ):
             return cached["value"]
         page_id = search_page_id(scientific_name)
@@ -324,17 +328,20 @@ def get_species_info(
         # fallback for species the pack doesn't cover (insects, fish,
         # plants, ...).
         traits = None
-        try:
+        traits_source = None  # "local" when cards come from the bundled trait
+        try:                  # pack (CC-licensed datasets), "eol" for TraitBank
             from app import trait_pack
 
             local_rows = trait_pack.fetch_local_trait_rows(session, scientific_name)
             if local_rows:
                 traits = _curate_cards(local_rows)
+                traits_source = "local" if traits else None
         except Exception:
             pass
         if not traits:
             try:
                 traits = fetch_traits(page_id, api_key or "")
+                traits_source = "eol" if traits else None
             except Exception:
                 traits = None
         payload = {
@@ -343,7 +350,9 @@ def get_species_info(
             "page_id": page_id,
             "description": description,
             "traits": traits,
+            "traits_source": traits_source,
             "key_hash": current_hash,
+            "version": VERSION,
         }
         _write_cache(session, key, payload)
         return payload
