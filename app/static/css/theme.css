@@ -898,3 +898,27 @@ footer {
 .eol-about p { margin: 0 0 0.5rem; line-height: 1.55; }
 .eol-about p:last-child { margin-bottom: 0; }
 .eol-about .meta { font-size: 0.85em; opacity: 0.75; }
+
+/* EOL "did you know" fact cards — responsive grid, single column on phones */
+.fact-title { margin: 0.9rem 0 0.4rem; font-size: 1rem; }
+.fact-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.fact-card {
+  background: var(--bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+}
+.fact-icon { font-size: 1.25rem; }
+.fact-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.65; margin-top: 0.15rem; }
+.fact-value { font-weight: 600; margin-top: 0.1rem; }
+.eol-more { margin: 0.6rem 0; }
+.eol-more summary { cursor: pointer; font-weight: 600; }
+.eol-more p { line-height: 1.55; }
+@media (max-width: 700px) {
+  .fact-cards { grid-template-columns: repeat(2, 1fr); }
+}

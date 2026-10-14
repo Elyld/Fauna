@@ -66,6 +66,20 @@ Paste that into a new Dockge stack (or just use this repo's `docker-compose.yml`
 - [x] Wishlist (`/wishlist`): species you'd love to find, with thumbnails, notes, range-map links, and an automatic "Seen ✓" badge when you log one
 - [x] Mobile-friendly quick-log: responsive pages, bottom tab bar, camera-first photo capture, installable PWA
 - [x] Species write-ups (`/species/<name>`): "About this species" summaries from the Encyclopedia of Life (free API, no key), cached 30 days, with attribution — fun facts like diet, lifespan, and behavior
+- [x] EOL extras: "✨ Did you know" fact cards (weight, diet, lifespan, habitat…) from EOL's TraitBank structured-data API, plus an expandable full article when EOL has English text. Needs a free EOL API key (see below) — without one, species pages just show the summary.
+
+## Encyclopedia of Life API key (optional, for fact cards)
+
+The species summary works with no key. The "did you know" fact cards use
+EOL's structured-data API, which needs a free token:
+
+1. Sign in (or make an account) at <https://eol.org/users/sign_in>
+2. Email `hammockj AT si.edu` with your EOL username, asking to be made a "power user"
+3. Visit <https://eol.org/services/authenticate> to get your token
+4. Paste it in Fauna's **Settings → 📚 Encyclopedia of Life key**
+
+It's stored on your server, write-only (never shown back). Species pages
+refetch automatically once it's saved.
 
 ## Bringing your eBird history
 

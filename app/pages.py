@@ -785,6 +785,13 @@ def settings_page(current: dict | None = None) -> str:
         if key_configured
         else '<div class="hint">No key saved yet — photo ID will stay in manual mode.</div>'
     )
+    eol_configured = current.get("eol_api_key_configured")
+    eol_status = (
+        '<div class="hint">✓ A key is saved. Entering a new one replaces it; '
+        "leaving it blank keeps it.</div>"
+        if eol_configured
+        else '<div class="hint">No key saved yet — species pages show the summary but no fact cards.</div>'
+    )
     home_lat = _esc(current.get("home_latitude") or "")
     home_lng = _esc(current.get("home_longitude") or "")
     home_name = _esc(current.get("home_name") or "")
@@ -856,6 +863,29 @@ def settings_page(current: dict | None = None) -> str:
     </div>
   </form>
   <div id="home-msg" style="margin-top:0.75rem"></div>
+</div>
+<div class="form-card">
+  <h3 style="margin-top:0">📚 Encyclopedia of Life key</h3>
+  <p class="hint" style="margin-top:0">
+    Unlocks the "did you know" fact cards on species pages (diet, size,
+    lifespan…). Free: sign in at
+    <a href="https://eol.org/users/sign_in" target="_blank" rel="noopener">eol.org</a>,
+    email <code>hammockj AT si.edu</code> asking for power-user status, then
+    grab your token at
+    <a href="https://eol.org/services/authenticate" target="_blank" rel="noopener">eol.org/services/authenticate</a>.
+    Paste it once — it's stored on this server.
+  </p>
+  <form id="eol-form">
+    <div class="field">
+      <label for="eol-key">EOL API key</label>
+      <input type="password" id="eol-key" autocomplete="off" placeholder="JWT token…">
+      {eol_status}
+    </div>
+    <div class="cta-row" style="justify-content:flex-start">
+      <button class="btn" type="submit">Save key</button>
+    </div>
+  </form>
+  <div id="eol-msg" style="margin-top:0.75rem"></div>
 </div>
 <div class="form-card">
   <h3 style="margin-top:0">💾 Backup</h3>
@@ -1051,6 +1081,28 @@ def settings_page(current: dict | None = None) -> str:
       }})
       .catch(function () {{
         msg.innerHTML = '<div class="notice">Couldn’t save — please try again.</div>';
+      }});
+  }});
+  var eolForm = document.getElementById('eol-form');
+  var eolMsg = document.getElementById('eol-msg');
+  eolForm.addEventListener('submit', function (e) {{
+    e.preventDefault();
+    var key = document.getElementById('eol-key').value;
+    var payload = {{}};
+    // Only send the key when she typed one — a blank field keeps what's saved.
+if (key) payload.eol_api_key=key;
+    fetch('/api/settings', {{
+      method: 'PUT',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify(payload)
+    }})
+      .then(function (r) {{ return r.json(); }})
+      .then(function () {{
+        eolMsg.innerHTML = '<div class="notice">✓ Saved.</div>';
+        document.getElementById('eol-key').value = '';
+      }})
+      .catch(function () {{
+        eolMsg.innerHTML = '<div class="notice">Couldn’t save — please try again.</div>';
       }});
   }});
 }})();
@@ -1455,17 +1507,52 @@ LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 def _eol_section(eol_info: dict | None) -> str:
     """'About this species' write-up from the Encyclopedia of Life.
 
-    Omitted entirely when EOL has nothing (or isn't answering) — a missing
-    write-up must never leave an empty box on the page.
+    Summary paragraph, 'did you know' fact cards (when an EOL API key is
+    configured), and an expandable full article (when EOL has English
+    text). Omitted entirely when EOL has nothing (or isn't answering) — a
+    missing write-up must never leave an empty box on the page.
     """
     if not eol_info or not eol_info.get("summary"):
         return ""
     summary = _esc(eol_info["summary"])
     url = _esc(eol_info.get("eol_url") or "https://eol.org/")
+
+    cards = ""
+    traits = eol_info.get("traits") or []
+    if traits:
+        items = "\n".join(
+            f'<div class="fact-card"><div class="fact-icon">{_esc(c.get("icon", "✨"))}</div>'
+            f'<div class="fact-label">{_esc(c.get("label", ""))}</div>'
+            f'<div class="fact-value">{_esc(c.get("value", ""))}</div></div>'
+            for c in traits[:6]
+        )
+        cards = f"""
+<h4 class="fact-title">✨ Did you know</h4>
+<div class="fact-cards">
+{items}
+</div>"""
+
+    more = ""
+    desc = eol_info.get("description") or {}
+    if desc.get("text"):
+        dtext = _esc(desc["text"])
+        dsrc = _esc(desc.get("source") or "Encyclopedia of Life")
+        dlink = ""
+        if desc.get("source_url"):
+            dlink = f' <a href="{_esc(desc["source_url"])}" target="_blank" rel="noopener">Source: {dsrc}</a>'
+        more = f"""
+<details class="eol-more">
+  <summary>📖 Read more about this species</summary>
+  <p>{dtext}</p>
+  <p class="meta">{dlink}</p>
+</details>"""
+
     return f"""
 <h3 class="section-title">📚 About this species</h3>
 <div class="eol-about">
   <p>{summary}</p>
+  {cards}
+  {more}
   <p class="meta">Summary from the <a href="{url}" target="_blank" rel="noopener">Encyclopedia of Life</a></p>
 </div>
 """

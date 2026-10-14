@@ -193,7 +193,7 @@ def health():
 # ---------------------------------------------------------------------------
 
 PUBLIC_SETTINGS = {"vision_model", "home_latitude", "home_longitude", "home_name"}
-SECRET_SETTINGS = {"openrouter_api_key"}
+SECRET_SETTINGS = {"openrouter_api_key", "eol_api_key"}
 
 
 def get_setting(session: Session, key: str, default: str | None = None) -> str | None:
@@ -224,6 +224,7 @@ def get_settings(session: Session = Depends(get_session)):
 
 class SettingsIn(BaseModel):
     openrouter_api_key: str | None = None  # empty string clears the stored key
+    eol_api_key: str | None = None  # empty string clears the stored key
     vision_model: str | None = None
     home_latitude: str | None = None  # strings from the form; validated below
     home_longitude: str | None = None
@@ -252,6 +253,8 @@ def _parse_home_coord(value: str | None, *, lat: bool) -> str | None:
 def put_settings(payload: SettingsIn, session: Session = Depends(get_session)):
     if payload.openrouter_api_key is not None:
         set_setting(session, "openrouter_api_key", payload.openrouter_api_key.strip() or None)
+    if payload.eol_api_key is not None:
+        set_setting(session, "eol_api_key", payload.eol_api_key.strip() or None)
     if payload.vision_model is not None:
         set_setting(
             session,
@@ -1135,7 +1138,8 @@ def species_page_route(
     # EOL matches scientific names; resolve common names through the
     # iNaturalist taxon card first (e.g. "cottontail" -> "Sylvilagus").
     eol_name = (taxon or {}).get("scientific_name") or name
-    eol_info = eol.get_species_info(session, eol_name) if eol_name else None
+    eol_key = get_setting(session, "eol_api_key")
+    eol_info = eol.get_species_info(session, eol_name, api_key=eol_key) if eol_name else None
     return pages.species_page(
         taxon=taxon,
         range_data=rng,

@@ -28,7 +28,7 @@ def test_health():
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert body["version"] == "0.2.0"
+    assert body["version"] == "0.3.0"
 
 
 def test_observation_round_trip():

@@ -164,7 +164,7 @@ def test_species_route_resolves_common_name_for_eol(monkeypatch):
         return {"common_name": "Cottontail Rabbits",
                 "scientific_name": "Sylvilagus"}
 
-    def fake_eol_info(session, sci_name):
+    def fake_eol_info(session, sci_name, api_key=None):
         seen["name"] = sci_name
         return {"summary": "A rabbit genus.",
                 "eol_url": "https://eol.org/pages/10818"}
@@ -177,3 +177,189 @@ def test_species_route_resolves_common_name_for_eol(monkeypatch):
     assert seen["name"] == "Sylvilagus"
     assert "About this species" in r.text
     assert "A rabbit genus." in r.text
+
+
+def _page_json(lang_texts):
+    objs = []
+    for lang, desc, subject in lang_texts:
+        objs.append({
+            "dataType": "http://purl.org/dc/dcmitype/Text",
+            "language": lang,
+            "description": f"<p>{desc}</p>",
+            "subject": [subject],
+            "source": "http://en.wikipedia.org/wiki/X",
+        })
+    return {"taxonConcept": {"dataObjects": objs}}
+
+
+def test_fetch_description_english_only(monkeypatch):
+    fake = _fake_get_factory([
+        ("https://eol.org/api/pages/1.0/5.json", _page_json([
+            ("zh", "灰松鼠是一种松鼠", "Description"),
+            ("en", "The eastern gray squirrel is a tree squirrel native to eastern North America, known for its bushy tail and adaptability to urban environments.", "Description"),
+        ])),
+    ])
+    monkeypatch.setattr(eol.httpx, "get", fake)
+    d = eol.fetch_description(5)
+    assert d is not None
+    assert "eastern gray squirrel" in d["text"]
+    assert "<p>" not in d["text"]
+    assert d["source"] == "Wikipedia"
+
+
+def test_fetch_description_none_when_no_english(monkeypatch):
+    fake = _fake_get_factory([
+        ("https://eol.org/api/pages/1.0/6.json", _page_json([
+            ("de", "Das Grauhörnchen ist ein Nagetier.", "Description"),
+        ])),
+    ])
+    monkeypatch.setattr(eol.httpx, "get", fake)
+    assert eol.fetch_description(6) is None
+
+
+def test_format_trait_value():
+    assert eol._format_trait_value({"measurement": "253.48", "units": "mm"}) == "253.5 mm"
+    assert eol._format_trait_value({"normal_measurement": "24", "normal_units": "g"}) == "24 g"
+    assert eol._format_trait_value({"object": "omnivore"}) == "omnivore"
+    assert eol._format_trait_value({"literal": "solitary"}) == "solitary"
+    assert eol._format_trait_value({}) is None
+
+
+def test_curate_cards_picks_interesting_traits():
+    rows = [
+        {"predicate": "body mass", "measurement": "500", "units": "g"},
+        {"predicate": "trophic guild", "object": "omnivore"},
+        {"predicate": "maximum longevity", "measurement": "23.6", "units": "years"},
+        {"predicate": "some obscure metric", "measurement": "1", "units": "x"},
+    ]
+    cards = eol._curate_cards(rows)
+    labels = [c["label"] for c in cards]
+    assert labels == ["Weight", "Diet", "Lifespan"]
+    assert cards[0]["value"] == "500 g"
+    assert cards[0]["icon"] == "⚖️"
+
+
+def test_fetch_traits_needs_key(monkeypatch):
+    assert eol.fetch_traits(1, "") is None
+    assert eol.fetch_traits(1, "   ") is None
+
+
+def test_fetch_traits_parses_csv(monkeypatch):
+    csv_text = (
+        "predicate,measurement,units,normal_measurement,normal_units,object,literal\n"
+        "body mass,500,g,0.5,kg,,\n"
+        "trophic guild,,,,,omnivore,\n"
+    )
+    fake = _fake_get_factory([(eol.CYPHER_URL, {"__csv__": csv_text})])
+
+    class _CsvResp:
+        text = csv_text
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        assert url == eol.CYPHER_URL
+        assert headers["Authorization"] == "JWT sekrit"
+        assert "page_id: 42" in params["query"]
+        assert "LIMIT" in params["query"]
+        return _CsvResp()
+
+    monkeypatch.setattr(eol.httpx, "get", fake_get)
+    cards = eol.fetch_traits(42, "sekrit")
+    assert [c["label"] for c in cards] == ["Weight", "Diet"]
+    assert cards[0]["value"] == "0.5 kg"  # normal_measurement preferred
+
+
+def test_species_info_refetches_when_key_added(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls["n"] += 1
+        if "search" in url:
+            return _FakeResp({"results": [{"id": 7, "title": "Vulpes vulpes"}]})
+        if "brief_summary" in url:
+            return _FakeResp({"brief_summary": "A fox."})
+        if "pages/1.0" in url:
+            return _FakeResp({"taxonConcept": {"dataObjects": []}})
+        if "service/cypher" in url:
+            class _CsvResp:
+                text = "predicate,measurement,units,normal_measurement,normal_units,object,literal\n"
+                def raise_for_status(self): pass
+            return _CsvResp()
+        raise AssertionError(url)
+
+    monkeypatch.setattr(eol.httpx, "get", fake_get)
+    session = SessionLocal()
+    try:
+        no_key = eol.get_species_info(session, "Vulpes vulpes")
+        assert no_key["traits"] is None
+        n1 = calls["n"]
+        # cached: no refetch without key change
+        eol.get_species_info(session, "Vulpes vulpes")
+        assert calls["n"] == n1
+        # key added -> refetch (picks up traits)
+        with_key = eol.get_species_info(session, "Vulpes vulpes", api_key="k1")
+        assert calls["n"] > n1
+        assert with_key["traits"] == []
+    finally:
+        session.close()
+
+
+def test_settings_accepts_eol_key():
+    from fastapi.testclient import TestClient
+
+    import app.main as main_mod
+
+    client = TestClient(main_mod.app)
+    r = client.put("/api/settings", json={"eol_api_key": "sekrit"})
+    assert r.status_code == 200
+    r = client.get("/api/settings")
+    assert r.json()["eol_api_key_configured"] is True
+    # write-only: value never leaks
+    assert "sekrit" not in r.text
+    r = client.put("/api/settings", json={"eol_api_key": ""})
+    assert r.status_code == 200
+    assert client.get("/api/settings").json()["eol_api_key_configured"] is False
+
+
+def test_eol_section_renders_cards_and_description():
+    html = pages._eol_section({
+        "summary": "A fox.",
+        "eol_url": "https://eol.org/pages/7",
+        "traits": [{"icon": "🍽️", "label": "Diet", "value": "omnivore"}],
+        "description": {"text": "Longer article here.",
+                        "source": "Wikipedia",
+                        "source_url": "http://en.wikipedia.org/wiki/X"},
+    })
+    assert "Did you know" in html
+    assert "omnivore" in html
+    assert "fact-cards" in html
+    assert "Read more about this species" in html
+    assert "Longer article here." in html
+    # without traits/description: plain summary only
+    html2 = pages._eol_section({"summary": "A fox.",
+                                 "eol_url": "https://eol.org/pages/7",
+                                 "traits": None, "description": None})
+    assert "Did you know" not in html2
+    assert "Read more" not in html2
+
+
+def test_clean_description_strips_boilerplate():
+    raw = "<p>More info for the term: fruit Red foxes are omnivorous.</p>"
+    assert eol._clean_description(raw) == "Red foxes are omnivorous."
+    raw2 = "More info on this topic. This species can be found here."
+    assert eol._clean_description(raw2) == "This species can be found here."
+
+
+def test_fetch_description_prefers_overview(monkeypatch):
+    fake = _fake_get_factory([
+        ("https://eol.org/api/pages/1.0/9.json", _page_json([
+            ("en", "More info for the term: x " + "Habitat words. " * 40, "Habitat"),
+            ("en", "Foxes are clever mammals that adapt remarkably well to many different environments all around the world.", "Brief Summary"),
+        ])),
+    ])
+    monkeypatch.setattr(eol.httpx, "get", fake)
+    d = eol.fetch_description(9)
+    assert d is not None
+    assert d["text"].startswith("Foxes are clever")
