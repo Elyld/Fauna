@@ -5,4 +5,4 @@ and the docker-compose service/container names. Nothing else hardcodes it.
 """
 
 APP_NAME = "Fauna"
-VERSION = "0.3.0"
+VERSION = "0.4.0"

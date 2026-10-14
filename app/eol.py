@@ -178,7 +178,7 @@ def fetch_description(page_id: int) -> dict | None:
 CARD_RULES: list[tuple[tuple[str, ...], str, str]] = [
     (("body mass",), "⚖️", "Weight"),
     (("body length", "total length", "wingspan"), "📏", "Size"),
-    (("trophic guild",), "🍽️", "Diet"),
+    (("trophic guild", "diet"), "🍽️", "Diet"),
     (("life span", "longevity", "maximum longevity"), "⏳", "Lifespan"),
     (("habitat",), "🏠", "Habitat"),
     (("litter size", "clutch size"), "🐣", "Young per birth"),
@@ -319,10 +319,24 @@ def get_species_info(
             description = fetch_description(page_id)
         except Exception:
             description = None
+        # Offline trait pack first: no key, no rate limits, instant — and
+        # independent of EOL's servers. EOL's TraitBank stays as the
+        # fallback for species the pack doesn't cover (insects, fish,
+        # plants, ...).
+        traits = None
         try:
-            traits = fetch_traits(page_id, api_key or "")
+            from app import trait_pack
+
+            local_rows = trait_pack.fetch_local_trait_rows(session, scientific_name)
+            if local_rows:
+                traits = _curate_cards(local_rows)
         except Exception:
-            traits = None
+            pass
+        if not traits:
+            try:
+                traits = fetch_traits(page_id, api_key or "")
+            except Exception:
+                traits = None
         payload = {
             "summary": summary,
             "eol_url": f"{EOL_BASE}/pages/{page_id}",
