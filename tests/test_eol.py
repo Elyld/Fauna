@@ -148,3 +148,32 @@ def test_species_page_includes_eol():
         display_name="Mystery bird", eol_info=None,
     )
     assert "About this species" not in html2
+
+
+def test_species_route_resolves_common_name_for_eol(monkeypatch):
+    """Route looks EOL up by the iNat-resolved scientific name, so common
+    names like 'cottontail' (which EOL can't match) still get a write-up."""
+    from fastapi.testclient import TestClient
+
+    import app.main as main_mod
+
+    seen = {}
+
+    def fake_taxon_info(name):
+        assert name == "cottontail"
+        return {"common_name": "Cottontail Rabbits",
+                "scientific_name": "Sylvilagus"}
+
+    def fake_eol_info(session, sci_name):
+        seen["name"] = sci_name
+        return {"summary": "A rabbit genus.",
+                "eol_url": "https://eol.org/pages/10818"}
+
+    monkeypatch.setattr(main_mod, "_taxon_info", fake_taxon_info)
+    monkeypatch.setattr(main_mod.eol, "get_species_info", fake_eol_info)
+    client = TestClient(main_mod.app)
+    r = client.get("/species/cottontail")
+    assert r.status_code == 200
+    assert seen["name"] == "Sylvilagus"
+    assert "About this species" in r.text
+    assert "A rabbit genus." in r.text
