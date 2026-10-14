@@ -886,3 +886,15 @@ footer {
   .lightbox-prev { left: 0.35rem; }
   .lightbox-next { right: 0.35rem; }
 }
+
+/* EOL species write-up on the species page */
+.eol-about {
+  background: var(--card, #f7f4ec);
+  border-left: 3px solid var(--accent, #7a9b6d);
+  border-radius: 0 8px 8px 0;
+  padding: 0.8rem 1rem;
+  margin: 0 0 1.2rem;
+}
+.eol-about p { margin: 0 0 0.5rem; line-height: 1.55; }
+.eol-about p:last-child { margin-bottom: 0; }
+.eol-about .meta { font-size: 0.85em; opacity: 0.75; }

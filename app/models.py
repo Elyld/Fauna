@@ -100,3 +100,17 @@ class RangeCache(Base):
     taxon_key: Mapped[str] = mapped_column(String(255), primary_key=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     points_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SpeciesInfoCache(Base):
+    """Cached Encyclopedia of Life species write-ups per taxon (30-day TTL).
+
+    Keyed by normalized scientific name; payload is the dict returned by
+    app.eol.get_species_info (description, source, license, eol_url).
+    """
+
+    __tablename__ = "species_info_cache"
+
+    taxon_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -65,6 +65,7 @@ Paste that into a new Dockge stack (or just use this repo's `docker-compose.yml`
 - [x] "Around you right now" (`/nearby`): the 12 species most recently observed within 25 km of your home location (research-grade iNaturalist data, cached 7 days), each with "＋ Log it" and "＋ Wishlist" buttons
 - [x] Wishlist (`/wishlist`): species you'd love to find, with thumbnails, notes, range-map links, and an automatic "Seen ✓" badge when you log one
 - [x] Mobile-friendly quick-log: responsive pages, bottom tab bar, camera-first photo capture, installable PWA
+- [x] Species write-ups (`/species/<name>`): "About this species" summaries from the Encyclopedia of Life (free API, no key), cached 30 days, with attribution — fun facts like diet, lifespan, and behavior
 
 ## Bringing your eBird history
 
