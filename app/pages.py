@@ -1452,14 +1452,34 @@ LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
 LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 
 
+def _eol_section(eol_info: dict | None) -> str:
+    """'About this species' write-up from the Encyclopedia of Life.
+
+    Omitted entirely when EOL has nothing (or isn't answering) — a missing
+    write-up must never leave an empty box on the page.
+    """
+    if not eol_info or not eol_info.get("summary"):
+        return ""
+    summary = _esc(eol_info["summary"])
+    url = _esc(eol_info.get("eol_url") or "https://eol.org/")
+    return f"""
+<h3 class="section-title">📚 About this species</h3>
+<div class="eol-about">
+  <p>{summary}</p>
+  <p class="meta">Summary from the <a href="{url}" target="_blank" rel="noopener">Encyclopedia of Life</a></p>
+</div>
+"""
+
+
 def species_page(
     taxon: dict | None,
     range_data: dict,
     own_points: list[dict],
     sightings: list[dict],
     display_name: str,
+    eol_info: dict | None = None,
 ) -> str:
-    """Per-species detail: taxon card, range map, and her own sightings."""
+    """Per-species detail: taxon card, EOL write-up, range map, own sightings."""
     common = (taxon or {}).get("common_name") or display_name
     sci = (taxon or {}).get("scientific_name") or display_name
     photo = (taxon or {}).get("photo_url")
@@ -1512,6 +1532,7 @@ def species_page(
     {f'<div class="meta"><a href="{_esc(wiki)}" target="_blank" rel="noopener">📖 Wikipedia</a></div>' if wiki else ""}
   </div>
 </div>
+{_eol_section(eol_info)}
 
 <h3 class="section-title">🗺️ Where they're normally seen</h3>
 <p class="hint">{_esc(map_note)}</p>

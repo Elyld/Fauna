@@ -28,6 +28,7 @@ from starlette.background import BackgroundTask
 
 from app import birdnet
 from app import ebird_import
+from app import eol
 from app import inat
 from app import nearby as nearby_mod
 from app import openrouter_models
@@ -1131,12 +1132,14 @@ def species_page_route(
         for o in own
         if o.latitude is not None and o.longitude is not None
     ]
+    eol_info = eol.get_species_info(session, name) if name else None
     return pages.species_page(
         taxon=taxon,
         range_data=rng,
         own_points=own_points,
         sightings=[_obs_to_dict(o) for o in own],
         display_name=name or "Unknown species",
+        eol_info=eol_info,
     )
 
 
