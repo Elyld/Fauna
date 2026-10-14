@@ -1132,7 +1132,10 @@ def species_page_route(
         for o in own
         if o.latitude is not None and o.longitude is not None
     ]
-    eol_info = eol.get_species_info(session, name) if name else None
+    # EOL matches scientific names; resolve common names through the
+    # iNaturalist taxon card first (e.g. "cottontail" -> "Sylvilagus").
+    eol_name = (taxon or {}).get("scientific_name") or name
+    eol_info = eol.get_species_info(session, eol_name) if eol_name else None
     return pages.species_page(
         taxon=taxon,
         range_data=rng,
